@@ -22,10 +22,13 @@ except ImportError:
 # pyqtgraph 3D 뷰어
 try:
     import pyqtgraph as pg
-    from pyqtgraph.opengl import ( 
-        GLViewWidget, GLScatterPlotItem,
-        GLGridItem, GLAxisItem,
-        GLTextItem, GLLinePlotItem
+    from pyqtgraph.opengl import (
+        GLViewWidget,
+        GLScatterPlotItem,
+        GLGridItem,
+        GLAxisItem,
+        GLTextItem,
+        GLLinePlotItem,
     )
 except ImportError:
     pg = None
@@ -33,7 +36,7 @@ except ImportError:
     GLScatterPlotItem = None
     GLGridItem = None
     GLAxisItem = None
-    
+
 
 # 깊이 TIFF / 이미지 읽기용
 try:
@@ -54,28 +57,70 @@ try:
 except ImportError:
     openpyxl = None
 
-from PySide6.QtCore import Qt, QObject, Signal, QThread, QEvent, QTimer, QPoint, QAbstractTableModel, QModelIndex, QSize, QPointF, QRectF
+from PySide6.QtCore import (
+    Qt,
+    QObject,
+    Signal,
+    QThread,
+    QEvent,
+    QTimer,
+    QPoint,
+    QAbstractTableModel,
+    QModelIndex,
+    QSize,
+    QPointF,
+    QRectF,
+)
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget,
-    QVBoxLayout, QHBoxLayout, QPushButton,
-    QTextEdit, QLabel, QSizePolicy, QButtonGroup, QMessageBox,
-    QDialog, QListWidget, QLineEdit, QCheckBox,
-    QGridLayout, QFrame, QTableView, QHeaderView,
-    QToolBar, QDockWidget, QGroupBox, QFormLayout, QSplitter, QFileDialog,
+    QApplication,
+    QMainWindow,
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QPushButton,
+    QTextEdit,
+    QLabel,
+    QSizePolicy,
+    QButtonGroup,
+    QMessageBox,
+    QDialog,
+    QListWidget,
+    QLineEdit,
+    QCheckBox,
+    QGridLayout,
+    QFrame,
+    QTableView,
+    QHeaderView,
+    QToolBar,
+    QDockWidget,
+    QGroupBox,
+    QFormLayout,
+    QSplitter,
+    QFileDialog,
     QSplitterHandle,
     QStyle,
 )
 from PySide6.QtGui import (
-    QPalette, QColor, QPixmap, QImage, QGuiApplication, QCursor, QIcon, 
-    QPainter, QPen, QBrush, QLinearGradient, QPainterPath,
-    
+    QPalette,
+    QColor,
+    QPixmap,
+    QImage,
+    QGuiApplication,
+    QCursor,
+    QIcon,
+    QPainter,
+    QPen,
+    QBrush,
+    QLinearGradient,
+    QPainterPath,
 )
+
 # --------------------------------------------------------------------
 # ★ 실제 카메라를 쓸 때는 True 로 바꾸기.
 # --------------------------------------------------------------------
 USE_REAL_CAMERA = True
 
-FIXED_ALLOW_RATIO = 0.02   # 2% (0.02 = 2/100)
+FIXED_ALLOW_RATIO = 0.02  # 2% (0.02 = 2/100)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 SAMPLE_PLY_PATH = os.path.join(BASE_DIR, "sample", "sample_point.ply")
@@ -88,21 +133,23 @@ RESULT_DIR = os.path.join(BASE_DIR, "result", "objects_ply_data", "2025")
 # ★ 비교데이터 저장 폴더(요청사항)
 COMPARE_DIR = os.path.join(BASE_DIR, "comparedata")
 
-ERROR_LOG_DIR = os.path.join(BASE_DIR, "error_log")   # .\error_log
-ERROR_SAVE_DIR = os.path.join(BASE_DIR, "error")      # .\error
+ERROR_LOG_DIR = os.path.join(BASE_DIR, "error_log")  # .\error_log
+ERROR_SAVE_DIR = os.path.join(BASE_DIR, "error")  # .\error
+
 
 def apply_dark_palette(app: QApplication):
     app.setStyle("Fusion")  # 네이티브 영향 줄이기
     pal = QPalette()
-    pal.setColor(QPalette.Window, QColor(45,45,45))
+    pal.setColor(QPalette.Window, QColor(45, 45, 45))
     pal.setColor(QPalette.WindowText, Qt.white)
-    pal.setColor(QPalette.Base, QColor(30,30,30))
+    pal.setColor(QPalette.Base, QColor(30, 30, 30))
     pal.setColor(QPalette.Text, Qt.white)
-    pal.setColor(QPalette.Button, QColor(60,60,60))
+    pal.setColor(QPalette.Button, QColor(60, 60, 60))
     pal.setColor(QPalette.ButtonText, Qt.white)
-    pal.setColor(QPalette.Highlight, QColor(14,90,122))
+    pal.setColor(QPalette.Highlight, QColor(14, 90, 122))
     pal.setColor(QPalette.HighlightedText, Qt.white)
     app.setPalette(pal)
+
 
 # ----------------- 깊이값 → 레인보우 컬러맵 -----------------
 def hsv_to_rgb_np(h, s, v):
@@ -121,22 +168,22 @@ def hsv_to_rgb_np(h, s, v):
     g = np.zeros_like(h)
     b = np.zeros_like(h)
 
-    mask = (i_mod == 0)
+    mask = i_mod == 0
     r[mask], g[mask], b[mask] = v[mask], t[mask], p[mask]
 
-    mask = (i_mod == 1)
+    mask = i_mod == 1
     r[mask], g[mask], b[mask] = q[mask], v[mask], p[mask]
 
-    mask = (i_mod == 2)
+    mask = i_mod == 2
     r[mask], g[mask], b[mask] = p[mask], v[mask], t[mask]
 
-    mask = (i_mod == 3)
+    mask = i_mod == 3
     r[mask], g[mask], b[mask] = p[mask], q[mask], v[mask]
 
-    mask = (i_mod == 4)
+    mask = i_mod == 4
     r[mask], g[mask], b[mask] = t[mask], p[mask], v[mask]
 
-    mask = (i_mod == 5)
+    mask = i_mod == 5
     r[mask], g[mask], b[mask] = v[mask], p[mask], q[mask]
 
     return r, g, b
@@ -369,9 +416,14 @@ def remove_metric_grid_with_labels(view):
 
 
 class FixedSplitterHandle(QSplitterHandle):
-    def mousePressEvent(self, e): e.ignore()
-    def mouseMoveEvent(self, e): e.ignore()
-    def mouseReleaseEvent(self, e): e.ignore()
+    def mousePressEvent(self, e):
+        e.ignore()
+
+    def mouseMoveEvent(self, e):
+        e.ignore()
+
+    def mouseReleaseEvent(self, e):
+        e.ignore()
 
 
 class FixedSplitter(QSplitter):
@@ -384,6 +436,7 @@ class HangulComposer:
     아주 기본적인 한글 조합 상태 머신.
     - 조합중인 글자(초/중/종)를 상태로 갖고 있다가 commit_text / flush로 확정한다.
     """
+
     def __init__(self):
         self.reset()
 
@@ -550,9 +603,9 @@ class VirtualKeyboard(QWidget):
       - "num" : 숫자 키패드(오차/게인/노출/번호검색 등)
       - "full": 전체 키보드(비교데이터 이름 입력 등) + 한/영 토글(자체 조합)
     """
+
     requestHide = Signal()
     requestReposition = Signal()
-    
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -564,7 +617,7 @@ class VirtualKeyboard(QWidget):
 
         self.target: QLineEdit | None = None
         self.mode = "num"
-        self.lang = "KO"   # "KO" or "EN"
+        self.lang = "KO"  # "KO" or "EN"
         self.shift = False
 
         self.composer = HangulComposer()
@@ -624,12 +677,12 @@ class VirtualKeyboard(QWidget):
             if self.target is not None:
                 self.target.setFocus(Qt.OtherFocusReason)
             handler()
-            self.requestReposition.emit() 
+            self.requestReposition.emit()
 
         b.clicked.connect(wrapped)
         self.grid.addWidget(b, r, c, rs, cs)
         return b
-    
+
     def _rebuild(self):
         self._clear_grid()
 
@@ -783,9 +836,9 @@ class VirtualKeyboard(QWidget):
             cur = self.target.cursorPosition()
             if cur <= 0:
                 return
-            new = t[:cur-1] + t[cur:]
+            new = t[: cur - 1] + t[cur:]
             self.target.setText(new)
-            self.target.setCursorPosition(cur-1)
+            self.target.setCursorPosition(cur - 1)
             return
 
         # full: 한글 조합 상태를 먼저 backspace
@@ -799,9 +852,9 @@ class VirtualKeyboard(QWidget):
             cur = self.target.cursorPosition()
             if cur <= 0:
                 return
-            new = t[:cur-1] + t[cur:]
+            new = t[: cur - 1] + t[cur:]
             self.target.setText(new)
-            self.target.setCursorPosition(cur-1)
+            self.target.setCursorPosition(cur - 1)
         else:
             self._set_composing(comp)
 
@@ -850,6 +903,7 @@ class VirtualKeyboardManager(QObject):
     - 창마다 Manager는 여러 개여도, 실제 VirtualKeyboard는 1개만 존재.
     - 포커스가 바뀌면 owner만 교체해서 "키보드 2개 뜨는 현상" 제거.
     """
+
     _GLOBAL_KB: VirtualKeyboard | None = None
     _GLOBAL_OWNER: Union["VirtualKeyboardManager", None] = None
 
@@ -862,8 +916,11 @@ class VirtualKeyboardManager(QObject):
             VirtualKeyboardManager._GLOBAL_KB = VirtualKeyboard(parent_window)
             # requestHide는 "현재 owner"의 hide를 호출하게 연결 (1회만)
             VirtualKeyboardManager._GLOBAL_KB.requestHide.connect(
-                lambda: (VirtualKeyboardManager._GLOBAL_OWNER.hide()
-                         if VirtualKeyboardManager._GLOBAL_OWNER else None)
+                lambda: (
+                    VirtualKeyboardManager._GLOBAL_OWNER.hide()
+                    if VirtualKeyboardManager._GLOBAL_OWNER
+                    else None
+                )
             )
 
         self.kb = VirtualKeyboardManager._GLOBAL_KB
@@ -885,7 +942,9 @@ class VirtualKeyboardManager(QObject):
             if event.type() == QEvent.FocusIn:
                 now_ms = int(time.time() * 1000)
 
-                if (self._suppress_target is obj) and (now_ms < self._suppress_until_ms):
+                if (self._suppress_target is obj) and (
+                    now_ms < self._suppress_until_ms
+                ):
                     return False
 
                 self._suppress_target = None
@@ -915,7 +974,9 @@ class VirtualKeyboardManager(QObject):
         #    (네가 찾은 해결: parent_window 붙여야 좌상단 고정 문제가 줄었지)
         if self.kb.parent() is not self.parent_window:
             self.kb.setParent(self.parent_window)
-            self.kb.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+            self.kb.setWindowFlags(
+                Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+            )
             self.kb.setAttribute(Qt.WA_ShowWithoutActivating, True)
 
         self.kb.attach(target, mode)
@@ -962,6 +1023,7 @@ class VirtualKeyboardManager(QObject):
 
 class CameraSelectDialog(QDialog):
     """카메라 목록을 보여주고, 하나 선택해서 OK하는 다이얼로그."""
+
     def __init__(self, camera_infos, parent=None):
         super().__init__(parent)
 
@@ -1021,6 +1083,7 @@ class CameraSelectDialog(QDialog):
 
 class CompareSaveDialog(QDialog):
     """비교 데이터 저장(번호/이름 입력 + 목록 표시)."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("비교 데이터 저장")
@@ -1071,7 +1134,9 @@ class CompareSaveDialog(QDialog):
 
         self.btn_save = QPushButton("저장")
         self.btn_save.setFixedSize(140, 48)
-        self.btn_save.setStyleSheet("QPushButton { background-color:#4CAF50; color:white; font-size:16px; }")
+        self.btn_save.setStyleSheet(
+            "QPushButton { background-color:#4CAF50; color:white; font-size:16px; }"
+        )
         form.addWidget(self.btn_save)
         main.addLayout(form)
 
@@ -1094,7 +1159,9 @@ class CompareSaveDialog(QDialog):
         self.btn_save.setAutoDefault(False)
         self.btn_save.setDefault(False)
 
-        self.lbl_hint = QLabel("번호와 이름을 입력하면  번호_제품명  폴더에 저장됩니다...")
+        self.lbl_hint = QLabel(
+            "번호와 이름을 입력하면  번호_제품명  폴더에 저장됩니다..."
+        )
         self.lbl_hint.setStyleSheet("color:white;")
         main.addWidget(self.lbl_hint)
 
@@ -1132,7 +1199,6 @@ class CompareSaveDialog(QDialog):
 
         QTimer.singleShot(0, lambda: self.list_widget.setFocus())
 
-
     def _populate_list(self):
         self.list_widget.clear()
         for f in list_compare_folders():
@@ -1153,13 +1219,17 @@ class CompareSaveDialog(QDialog):
     def on_number_changed(self):
         num = self.edit_number.text().strip()
         if num == "":
-            self.lbl_hint.setText("번호와 이름을 입력하면  번호_제품명  폴더에 저장됩니다...")
+            self.lbl_hint.setText(
+                "번호와 이름을 입력하면  번호_제품명  폴더에 저장됩니다..."
+            )
             return
         f = find_folder_by_number(num)
         if f:
             self.lbl_hint.setText(f"⚠ 지정된 번호({num})에 데이터가 존재합니다: {f}")
         else:
-            self.lbl_hint.setText("번호와 이름을 입력하면  번호_제품명  폴더에 저장됩니다...")
+            self.lbl_hint.setText(
+                "번호와 이름을 입력하면  번호_제품명  폴더에 저장됩니다..."
+            )
 
     def on_save_clicked(self):
         num = sanitize_folder_component(self.edit_number.text())
@@ -1181,7 +1251,7 @@ class CompareSaveDialog(QDialog):
                 "경고!",
                 "지정된 번호에 데이터가 존재합니다!\n덮어쓰시겠습니까?",
                 QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
+                QMessageBox.No,
             )
             if reply != QMessageBox.Yes:
                 self.lbl_err.setText("저장이 취소되었습니다.")
@@ -1199,7 +1269,7 @@ class CompareSaveDialog(QDialog):
                 "경고!",
                 "지정된 번호에 데이터가 존재합니다!\n덮어쓰시겠습니까?",
                 QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No
+                QMessageBox.No,
             )
             if reply != QMessageBox.Yes:
                 self.lbl_err.setText("저장이 취소되었습니다.")
@@ -1234,6 +1304,7 @@ class CompareSaveDialog(QDialog):
 
 class CompareLoadDialog(QDialog):
     """비교 데이터 불러오기(목록 표시 + 번호 검색)."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("비교 데이터 불러오기")
@@ -1273,7 +1344,9 @@ class CompareLoadDialog(QDialog):
 
         self.btn_load = QPushButton("불러오기")
         self.btn_load.setFixedSize(140, 48)
-        self.btn_load.setStyleSheet("QPushButton { background-color:#4CAF50; color:white; font-size:16px; }")
+        self.btn_load.setStyleSheet(
+            "QPushButton { background-color:#4CAF50; color:white; font-size:16px; }"
+        )
         bottom.addWidget(self.btn_load)
 
         # ===== UI 크기/폰트 개선 =====
@@ -1314,7 +1387,6 @@ class CompareLoadDialog(QDialog):
         self.vkb.register(self.edit_search, "num")
 
         QTimer.singleShot(0, lambda: self.list_widget.setFocus())
-
 
     def _populate_list(self):
         self.list_widget.clear()
@@ -1372,7 +1444,11 @@ class ExcelTableModel(QAbstractTableModel):
 
         r = index.row()
         c = index.column()
-        v = self.rows[r][c] if (0 <= r < len(self.rows) and 0 <= c < len(self.headers)) else None
+        v = (
+            self.rows[r][c]
+            if (0 <= r < len(self.rows) and 0 <= c < len(self.headers))
+            else None
+        )
 
         # 표시
         if role == Qt.DisplayRole:
@@ -1417,6 +1493,7 @@ class ExcelTableModel(QAbstractTableModel):
                 f = Font(bold=True)  # openpyxl Font 말고 Qt Font가 아니라서 아래처럼
                 # Qt용 폰트는 PySide6.QtGui.QFont 써야 함
                 from PySide6.QtGui import QFont
+
                 qf = QFont()
                 qf.setBold(True)
                 qf.setPointSize(11)
@@ -1437,13 +1514,16 @@ class ExcelTableModel(QAbstractTableModel):
         if not (0 <= column < len(self.headers)):
             return
         self.layoutAboutToBeChanged.emit()
-        reverse = (order == Qt.DescendingOrder)
-        self.rows.sort(key=lambda row: ("" if column >= len(row) else row[column]), reverse=reverse)
+        reverse = order == Qt.DescendingOrder
+        self.rows.sort(
+            key=lambda row: ("" if column >= len(row) else row[column]), reverse=reverse
+        )
         self.layoutChanged.emit()
 
 
 class ExcelLogViewerDialog(QDialog):
     """xlsx 파일을 읽어서 UI 내부(QTableView)로 보여주는 뷰어."""
+
     def __init__(self, xlsx_path: str, parent=None):
         super().__init__(parent)
         self.setWindowTitle(f"Excel Log Viewer - {os.path.basename(xlsx_path)}")
@@ -1464,7 +1544,9 @@ class ExcelLogViewerDialog(QDialog):
 
         self.btn_reload = QPushButton("Reload")
         self.btn_reload.setFixedSize(110, 34)
-        self.btn_reload.setStyleSheet("QPushButton { background-color:#0e5a7a; color:white; }")
+        self.btn_reload.setStyleSheet(
+            "QPushButton { background-color:#0e5a7a; color:white; }"
+        )
         self.btn_reload.clicked.connect(self.reload)
         top.addWidget(self.btn_reload)
 
@@ -1526,6 +1608,7 @@ class ExcelLogViewerDialog(QDialog):
 
 class LogFileLoadDialog(QDialog):
     """error_log 폴더의 날짜별 xlsx 목록 표시 + 검색 + 더블클릭 로드."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Load Other Log")
@@ -1553,7 +1636,7 @@ class LogFileLoadDialog(QDialog):
         top.addWidget(self.edit_search)
 
         main.addLayout(top)
-        
+
         self.edit_search.textChanged.connect(self.on_search_live)
 
         self.list_widget = QListWidget()
@@ -1568,7 +1651,9 @@ class LogFileLoadDialog(QDialog):
 
         self.btn_load = QPushButton("Load")
         self.btn_load.setFixedSize(140, 48)
-        self.btn_load.setStyleSheet("QPushButton { background-color:#4CAF50; color:white; font-size:16px; }")
+        self.btn_load.setStyleSheet(
+            "QPushButton { background-color:#4CAF50; color:white; font-size:16px; }"
+        )
         self.btn_load.setAutoDefault(False)
         self.btn_load.setDefault(False)
         bottom.addWidget(self.btn_load)
@@ -1684,6 +1769,7 @@ class ScanViewer(QWidget):
     - Point: pyqtgraph GLViewWidget
     - QImage: 내부에 원본 QImage를 저장해두고 resize 시 자동 재스케일
     """
+
     def __init__(self, parent=None):
         super().__init__(parent)
 
@@ -1731,10 +1817,10 @@ class ScanViewer(QWidget):
             return False
         if self.gl_view is None:
             self.gl_view = GLViewWidget()
-            self.gl_view.setBackgroundColor('k')
-            self.gl_view.opts['fov'] = 60
-            self.gl_view.opts['elevation'] = 25
-            self.gl_view.opts['azimuth'] = 45
+            self.gl_view.setBackgroundColor("k")
+            self.gl_view.opts["fov"] = 60
+            self.gl_view.opts["elevation"] = 25
+            self.gl_view.opts["azimuth"] = 45
             self.gl_view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
             self._layout.addWidget(self.gl_view)
 
@@ -1783,7 +1869,7 @@ class ScanViewer(QWidget):
 
     def _reset_and_translate(self, item, tx, ty, tz):
         try:
-            item.resetTransform()   # ✅ 누적 translate 방지
+            item.resetTransform()  # ✅ 누적 translate 방지
         except Exception:
             pass
         try:
@@ -1811,9 +1897,9 @@ class ScanViewer(QWidget):
 
         # 눈금 시작/끝을 step에 맞게 스냅
         x0 = math.floor(mins[0] / step_xy) * step_xy
-        x1 = math.ceil (maxs[0] / step_xy) * step_xy
+        x1 = math.ceil(maxs[0] / step_xy) * step_xy
         y0 = math.floor(mins[1] / step_xy) * step_xy
-        y1 = math.ceil (maxs[1] / step_xy) * step_xy
+        y1 = math.ceil(maxs[1] / step_xy) * step_xy
 
         # 그리드가 놓일 z 평면(데이터 바닥에 깔기)
         z_plane = float(mins[2])
@@ -1841,38 +1927,56 @@ class ScanViewer(QWidget):
         # X ticks (y0 라인에 표시)
         xs = np.arange(x0, x1 + 0.5 * step_xy, step_xy)
         for xv in xs:
-            seg = np.array([[xv, y0, z_plane], [xv, y0 + tick_len, z_plane]], dtype=float)
+            seg = np.array(
+                [[xv, y0, z_plane], [xv, y0 + tick_len, z_plane]], dtype=float
+            )
             it = GLLinePlotItem(pos=seg, mode="lines", antialias=True)
             it.setGLOptions("translucent")
-            self.gl_view.addItem(it); self._metric_items.append(it)
+            self.gl_view.addItem(it)
+            self._metric_items.append(it)
 
-            txt = GLTextItem(pos=(xv, y0 - label_off, z_plane), text=f"{xv:.0f}", color=(1,1,1,1))
-            self.gl_view.addItem(txt); self._metric_items.append(txt)
+            txt = GLTextItem(
+                pos=(xv, y0 - label_off, z_plane), text=f"{xv:.0f}", color=(1, 1, 1, 1)
+            )
+            self.gl_view.addItem(txt)
+            self._metric_items.append(txt)
 
         # Y ticks (x0 라인에 표시)
         ys = np.arange(y0, y1 + 0.5 * step_xy, step_xy)
         for yv in ys:
-            seg = np.array([[x0, yv, z_plane], [x0 + tick_len, yv, z_plane]], dtype=float)
+            seg = np.array(
+                [[x0, yv, z_plane], [x0 + tick_len, yv, z_plane]], dtype=float
+            )
             it = GLLinePlotItem(pos=seg, mode="lines", antialias=True)
             it.setGLOptions("translucent")
-            self.gl_view.addItem(it); self._metric_items.append(it)
+            self.gl_view.addItem(it)
+            self._metric_items.append(it)
 
-            txt = GLTextItem(pos=(x0 - label_off * 1.2, yv, z_plane), text=f"{yv:.0f}", color=(1,1,1,1))
-            self.gl_view.addItem(txt); self._metric_items.append(txt)
+            txt = GLTextItem(
+                pos=(x0 - label_off * 1.2, yv, z_plane),
+                text=f"{yv:.0f}",
+                color=(1, 1, 1, 1),
+            )
+            self.gl_view.addItem(txt)
+            self._metric_items.append(txt)
 
         # Z ticks (x0,y0 코너에서 위로)
         step_z = self._nice_step(span_z, target_ticks=7)
         z0 = math.floor(mins[2] / step_z) * step_z
-        z1 = math.ceil (maxs[2] / step_z) * step_z
+        z1 = math.ceil(maxs[2] / step_z) * step_z
         zs = np.arange(z0, z1 + 0.5 * step_z, step_z)
         for zv in zs:
             seg = np.array([[x0, y0, zv], [x0 + tick_len, y0, zv]], dtype=float)
             it = GLLinePlotItem(pos=seg, mode="lines", antialias=True)
             it.setGLOptions("translucent")
-            self.gl_view.addItem(it); self._metric_items.append(it)
+            self.gl_view.addItem(it)
+            self._metric_items.append(it)
 
-            txt = GLTextItem(pos=(x0 - label_off * 1.2, y0, zv), text=f"{zv:.0f}", color=(1,1,1,1))
-            self.gl_view.addItem(txt); self._metric_items.append(txt)
+            txt = GLTextItem(
+                pos=(x0 - label_off * 1.2, y0, zv), text=f"{zv:.0f}", color=(1, 1, 1, 1)
+            )
+            self.gl_view.addItem(txt)
+            self._metric_items.append(txt)
 
     def _clear_tick_items(self):
         if self.gl_view is None:
@@ -1902,12 +2006,13 @@ class ScanViewer(QWidget):
         """
         try:
             from PySide6.QtGui import QFont
+
             tick_font = QFont("Arial", 9)
             tick_font.setBold(False)
             tick_font.setWeight(QFont.Weight.Light)
         except Exception:
             tick_font = None
-        
+
         if self.gl_view is None or GLLinePlotItem is None or GLTextItem is None:
             return
 
@@ -1928,13 +2033,13 @@ class ScanViewer(QWidget):
 
         # 등분 개수
         div_xy = max(2, int(getattr(self, "tick_divisions", 8)))
-        div_z  = max(2, int(getattr(self, "tick_divisions_z", 4)))  # ✅ 추가(기본 4)
+        div_z = max(2, int(getattr(self, "tick_divisions_z", 4)))  # ✅ 추가(기본 4)
 
         # 틱 위치(끝 포함)
         xs = np.linspace(mins[0], maxs[0], div_xy + 1)
         ys = np.linspace(mins[1], maxs[1], div_xy + 1)
-        zs = np.linspace(mins[2], maxs[2], div_z  + 1)
-        
+        zs = np.linspace(mins[2], maxs[2], div_z + 1)
+
         # 틱 길이(너무 작/크지 않게)
         base = float(max(spans[0], spans[1], spans[2], 1.0))
         tick_len = max(5.0, base * 0.03)
@@ -1947,7 +2052,7 @@ class ScanViewer(QWidget):
         cx, cy, cz = (x0 + x1) * 0.5, (y0 + y1) * 0.5, (z0 + z1) * 0.5
 
         z_plane = z0
-        z_eps = tick_len * 0.06   # 깊이버퍼 회피 + 살짝 띄움(겹침 완화)
+        z_eps = tick_len * 0.06  # 깊이버퍼 회피 + 살짝 띄움(겹침 완화)
 
         # --- 카메라 위치 얻기(가능하면 cameraPosition 사용, 실패하면 opts로 근사) ---
         cam = None
@@ -1958,11 +2063,14 @@ class ScanViewer(QWidget):
             az = np.deg2rad(float(self.gl_view.opts.get("azimuth", 45)))
             el = np.deg2rad(float(self.gl_view.opts.get("elevation", 30)))
             dist = float(self.gl_view.opts.get("distance", 1000.0))
-            cam = np.array([
-                cx + dist * np.cos(el) * np.cos(az),
-                cy + dist * np.cos(el) * np.sin(az),
-                cz + dist * np.sin(el),
-            ], dtype=float)
+            cam = np.array(
+                [
+                    cx + dist * np.cos(el) * np.cos(az),
+                    cy + dist * np.cos(el) * np.sin(az),
+                    cz + dist * np.sin(el),
+                ],
+                dtype=float,
+            )
 
         # 변경(카메라에 더 가까운 면 선택 → 훨씬 자연스러움)
         edge_y = y0 if abs(cam[1] - y0) < abs(cam[1] - y1) else y1
@@ -1971,23 +2079,22 @@ class ScanViewer(QWidget):
         # 바깥쪽(라벨) 방향 / 안쪽(틱) 방향
         x_out = -1.0 if edge_y == y0 else +1.0
         y_out = -1.0 if edge_x == x0 else +1.0
-        x_in  = +1.0 if edge_y == y0 else -1.0
-        y_in  = +1.0 if edge_x == x0 else -1.0
+        x_in = +1.0 if edge_y == y0 else -1.0
+        y_in = +1.0 if edge_x == x0 else -1.0
 
         label_mul = float(getattr(self, "tick_label_mul", 0.9))
 
         # 라벨 기준 좌표(겹침 방지용으로 더 멀리)
-        x_tick_y  = edge_y
+        x_tick_y = edge_y
         x_label_y = edge_y + x_out * (tick_len + label_off * label_mul)
-        
-        y_tick_x  = edge_x
+
+        y_tick_x = edge_x
         y_label_x = edge_x + y_out * (tick_len + label_off * label_mul)
 
         # Z 라벨은 "카메라 가까운 코너"에서 살짝 떨어진 위치로
         z_anchor_x, z_anchor_y = edge_x, edge_y
         z_label_x = z_anchor_x + y_out * (label_off * 2.6)
         z_label_y = z_anchor_y + x_out * (label_off * 0.4)
-        
 
         # --- (선택) 그리드를 데이터 범위에 맞게 이동/스케일 ---
         if self.gl_grid is not None:
@@ -2017,36 +2124,58 @@ class ScanViewer(QWidget):
 
         # --- X축 틱/라벨 (y=y0 라인 위에) ---
         for i, xv in enumerate(xs):
-            seg = np.array([[xv, x_tick_y, z_plane], [xv, x_tick_y + x_in * tick_len, z_plane]], dtype=np.float32)
+            seg = np.array(
+                [[xv, x_tick_y, z_plane], [xv, x_tick_y + x_in * tick_len, z_plane]],
+                dtype=np.float32,
+            )
             ln = GLLinePlotItem(pos=seg, mode="lines", antialias=True)
-            self.gl_view.addItem(ln); self._tick_items.append(ln)
+            self.gl_view.addItem(ln)
+            self._tick_items.append(ln)
 
             txt = GLTextItem(
-                pos=(float(xv), float(x_label_y), float(z_plane + z_eps)),   # ✅ z_eps로 살짝 띄움
+                pos=(
+                    float(xv),
+                    float(x_label_y),
+                    float(z_plane + z_eps),
+                ),  # ✅ z_eps로 살짝 띄움
                 text=f"{xv:.0f}",
                 color=(220, 220, 220, 255),
-                font=tick_font
+                font=tick_font,
             )
-            try: txt.setGLOptions("translucent")
-            except Exception: pass
-            self.gl_view.addItem(txt); self._tick_items.append(txt)
+            try:
+                txt.setGLOptions("translucent")
+            except Exception:
+                pass
+            self.gl_view.addItem(txt)
+            self._tick_items.append(txt)
 
         # --- Y축 틱/라벨 (x=x0 라인 위에) ---
         for i, yv in enumerate(ys):
-            seg = np.array([[y_tick_x, yv, z_plane], [y_tick_x + y_in * tick_len, yv, z_plane]], dtype=np.float32)
+            seg = np.array(
+                [[y_tick_x, yv, z_plane], [y_tick_x + y_in * tick_len, yv, z_plane]],
+                dtype=np.float32,
+            )
             ln = GLLinePlotItem(pos=seg, mode="lines", antialias=True)
-            self.gl_view.addItem(ln); self._tick_items.append(ln)
+            self.gl_view.addItem(ln)
+            self._tick_items.append(ln)
 
             txt = GLTextItem(
-                pos=(float(y_label_x), float(yv), float(z_plane + 2*z_eps)),  # ✅ X라벨과 z 오프셋 다르게
+                pos=(
+                    float(y_label_x),
+                    float(yv),
+                    float(z_plane + 2 * z_eps),
+                ),  # ✅ X라벨과 z 오프셋 다르게
                 text=f"{yv:.0f}",
                 color=(220, 220, 220, 255),
-                font=tick_font
+                font=tick_font,
             )
-            try: txt.setGLOptions("translucent")
-            except Exception: pass
-            self.gl_view.addItem(txt); self._tick_items.append(txt)
-        
+            try:
+                txt.setGLOptions("translucent")
+            except Exception:
+                pass
+            self.gl_view.addItem(txt)
+            self._tick_items.append(txt)
+
         # ✅ Z축(세로) 틱/라벨:
         #    - "눈금자(틱 시작점)"는 Z축(코너)에 딱 붙임
         #    - 틱/텍스트는 카메라(시점) 방향으로만 살짝 뽑아내 겹침을 줄임
@@ -2065,9 +2194,14 @@ class ScanViewer(QWidget):
                 continue
 
             p0 = np.array([z_ruler_x, z_ruler_y, zv], dtype=np.float32)
-            p1 = np.array([z_ruler_x + out_xy[0] * tick_len,
-                        z_ruler_y + out_xy[1] * tick_len,
-                        zv], dtype=np.float32)
+            p1 = np.array(
+                [
+                    z_ruler_x + out_xy[0] * tick_len,
+                    z_ruler_y + out_xy[1] * tick_len,
+                    zv,
+                ],
+                dtype=np.float32,
+            )
             seg = np.vstack([p0, p1])
             ln = GLLinePlotItem(pos=seg, mode="lines", antialias=True)
             self.gl_view.addItem(ln)
@@ -2082,7 +2216,7 @@ class ScanViewer(QWidget):
                 pos=txt_pos,
                 text=f"{zv:.0f}",
                 color=(220, 220, 220, 255),
-                font=tick_font
+                font=tick_font,
             )
             try:
                 txt.setGLOptions("translucent")
@@ -2093,7 +2227,9 @@ class ScanViewer(QWidget):
 
     def show_pointcloud(self, points: np.ndarray, colors: np.ndarray | None = None):
         if not self.ensure_gl_view():
-            self.label.setText("pyqtgraph / PyOpenGL 설치 필요: pip install pyqtgraph PyOpenGL")
+            self.label.setText(
+                "pyqtgraph / PyOpenGL 설치 필요: pip install pyqtgraph PyOpenGL"
+            )
             self.label.show()
             if self.gl_view is not None:
                 self.gl_view.hide()
@@ -2128,7 +2264,7 @@ class ScanViewer(QWidget):
                 colors = colors[idx]
 
         center = pts.mean(axis=0)
-        pts_rel = pts - center   # (계산용 상대좌표: radius 계산 등에만 사용)
+        pts_rel = pts - center  # (계산용 상대좌표: radius 계산 등에만 사용)
 
         # --- 좌표 오버레이(수치) 업데이트 ---
         self._update_coord_text(pts)
@@ -2161,7 +2297,7 @@ class ScanViewer(QWidget):
 
         radius = float(np.linalg.norm(pts_rel, axis=1).max())
         if radius > 0:
-            self.gl_view.opts['distance'] = radius * 2.5
+            self.gl_view.opts["distance"] = radius * 2.5
 
         point_size = 2.0
 
@@ -2171,12 +2307,14 @@ class ScanViewer(QWidget):
                 color=cols_rgba,
                 size=point_size,
                 pxMode=True,
-                glOptions='opaque',
+                glOptions="opaque",
             )
             self.gl_view.addItem(self.gl_scatter)
         else:
-            self.gl_scatter.setData(pos=pts, color=cols_rgba, size=point_size, pxMode=True)
-            self.gl_scatter.setGLOptions('opaque')
+            self.gl_scatter.setData(
+                pos=pts, color=cols_rgba, size=point_size, pxMode=True
+            )
+            self.gl_scatter.setGLOptions("opaque")
 
         if self.show_coords_overlay:
             self._update_ticks_from_points(pts_rel)  # ✅ scatter pos와 같은 좌표를 넣기
@@ -2184,7 +2322,9 @@ class ScanViewer(QWidget):
             self._clear_tick_items()
 
         if pg is not None:
-            self.gl_view.opts['center'] = pg.Vector(float(center[0]), float(center[1]), float(center[2]))
+            self.gl_view.opts["center"] = pg.Vector(
+                float(center[0]), float(center[1]), float(center[2])
+            )
 
         self._apply_coords_visibility()
         self.gl_view.show()
@@ -2215,7 +2355,9 @@ class ScanViewer(QWidget):
             return
 
         pixmap = QPixmap.fromImage(self._current_qimg)
-        scaled = pixmap.scaled(self.label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        scaled = pixmap.scaled(
+            self.label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation
+        )
         self.label.setPixmap(scaled)
         self.label.setText("")
         self.label.setAlignment(Qt.AlignCenter)
@@ -2237,7 +2379,7 @@ class ScanViewer(QWidget):
 
     def _apply_coords_visibility(self):
         # pointcloud 모드(gl_view visible)일 때만 의미 있음
-        gl_visible = (self.gl_view is not None and self.gl_view.isVisible())
+        gl_visible = self.gl_view is not None and self.gl_view.isVisible()
         on = self.show_coords_overlay and gl_visible
 
         if not on:
@@ -2277,12 +2419,13 @@ class ScanViewer(QWidget):
         )
         self.coord_overlay.setText(text)
 
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
         self.setWindowTitle("3D 카메라 스캔 인터페이스 (Improved UI)")
-        self.resize(1600, 900)          # ✅ 초기 창 크게
+        self.resize(1600, 900)  # ✅ 초기 창 크게
         self.setMinimumSize(1500, 850)
 
         os.makedirs(COMPARE_DIR, exist_ok=True)
@@ -2364,10 +2507,14 @@ class MainWindow(QMainWindow):
         # 최대화/전체화면일 때 Log가 과하게 커지지 않도록 제한값
         self._min_bottom_h = 160
         self._max_bottom_h = 340
-        self._maximized_bottom_ratio = 0.28  # 전체 높이의 28% 정도만 Log에 배정 (취향대로 0.22~0.35 추천)
+        self._maximized_bottom_ratio = (
+            0.28  # 전체 높이의 28% 정도만 Log에 배정 (취향대로 0.22~0.35 추천)
+        )
 
         if pg is None or GLViewWidget is None:
-            self.append_log("[ERROR] pyqtgraph / PyOpenGL 미설치. 3D 뷰어를 사용하려면 pip install pyqtgraph PyOpenGL")
+            self.append_log(
+                "[ERROR] pyqtgraph / PyOpenGL 미설치. 3D 뷰어를 사용하려면 pip install pyqtgraph PyOpenGL"
+            )
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -2432,7 +2579,12 @@ class MainWindow(QMainWindow):
         if GLViewWidget is None:
             self.btn_xyz_toggle.setEnabled(False)
 
-        self._set_btn_icon(self.btn_xyz_toggle, "view-grid", QStyle.SP_TitleBarShadeButton, "3D 좌표 표시")
+        self._set_btn_icon(
+            self.btn_xyz_toggle,
+            "view-grid",
+            QStyle.SP_TitleBarShadeButton,
+            "3D 좌표 표시",
+        )
 
         self.btn_save_files = QPushButton("Save Recent")
         self.btn_save_files.setEnabled(False)
@@ -2472,21 +2624,60 @@ class MainWindow(QMainWindow):
         # --- Core Flow ---
         self.btn_connect.setIcon(self._icon_chain_link())
         self.btn_connect.setIconSize(QSize(18, 18))
-        self._set_btn_icon(self.btn_scan, "media-playback-start", QStyle.SP_MediaPlay, "스캔 실행")
-        self._set_btn_icon(self.btn_save_files, "document-save", QStyle.SP_DialogSaveButton, "최근 스캔 저장")
+        self._set_btn_icon(
+            self.btn_scan, "media-playback-start", QStyle.SP_MediaPlay, "스캔 실행"
+        )
+        self._set_btn_icon(
+            self.btn_save_files,
+            "document-save",
+            QStyle.SP_DialogSaveButton,
+            "최근 스캔 저장",
+        )
 
-        self._set_btn_icon(self.btn_define_compare, "edit-select-all", QStyle.SP_DialogApplyButton, "최근 스캔을 비교 기준으로")
-        self._set_btn_icon(self.btn_save_compare_data, "document-save-as", QStyle.SP_DialogSaveButton, "비교 데이터 저장")
-        self._set_btn_icon(self.btn_load_compare_data, "document-open", QStyle.SP_DialogOpenButton, "비교 데이터 불러오기")
-        self._set_btn_icon(self.btn_reset_compare_data, "edit-clear", QStyle.SP_DialogResetButton, "비교 기준 리셋")
+        self._set_btn_icon(
+            self.btn_define_compare,
+            "edit-select-all",
+            QStyle.SP_DialogApplyButton,
+            "최근 스캔을 비교 기준으로",
+        )
+        self._set_btn_icon(
+            self.btn_save_compare_data,
+            "document-save-as",
+            QStyle.SP_DialogSaveButton,
+            "비교 데이터 저장",
+        )
+        self._set_btn_icon(
+            self.btn_load_compare_data,
+            "document-open",
+            QStyle.SP_DialogOpenButton,
+            "비교 데이터 불러오기",
+        )
+        self._set_btn_icon(
+            self.btn_reset_compare_data,
+            "edit-clear",
+            QStyle.SP_DialogResetButton,
+            "비교 기준 리셋",
+        )
 
         # --- Logs / Git ---
-        self._set_btn_icon(self.btn_watch_today_log, "x-office-spreadsheet", QStyle.SP_FileDialogInfoView, "오늘 로그 보기")
-        self._set_btn_icon(self.btn_load_other_log, "folder-open", QStyle.SP_DirOpenIcon, "다른 로그 불러오기")
-        self._set_btn_icon(self.btn_upload_git, "go-up", QStyle.SP_ArrowUp, "Git 업로드 실행")
+        self._set_btn_icon(
+            self.btn_watch_today_log,
+            "x-office-spreadsheet",
+            QStyle.SP_FileDialogInfoView,
+            "오늘 로그 보기",
+        )
+        self._set_btn_icon(
+            self.btn_load_other_log,
+            "folder-open",
+            QStyle.SP_DirOpenIcon,
+            "다른 로그 불러오기",
+        )
+        self._set_btn_icon(
+            self.btn_upload_git, "go-up", QStyle.SP_ArrowUp, "Git 업로드 실행"
+        )
 
     def _build_central_views(self):
-        splitter = FixedSplitter(Qt.Horizontal)   # ✅ 중앙 드래그 불가(완전 고정)
+        splitter = FixedSplitter(Qt.Horizontal)  # ✅ 중앙 드래그 불가(완전 고정)
         self.central_splitter = splitter
         splitter.setChildrenCollapsible(False)
         splitter.setHandleWidth(1)
@@ -2500,7 +2691,9 @@ class MainWindow(QMainWindow):
         left_header.setContentsMargins(0, 0, 0, 0)
         left_header.setSpacing(6)
         left_icon = QLabel()
-        left_icon.setPixmap(self.style().standardIcon(QStyle.SP_DirClosedIcon).pixmap(16, 16))
+        left_icon.setPixmap(
+            self.style().standardIcon(QStyle.SP_DirClosedIcon).pixmap(16, 16)
+        )
         left_icon.setToolTip("Compare Panel")
         left_header.addWidget(left_icon, 0)
         left_header.addStretch(1)
@@ -2521,12 +2714,14 @@ class MainWindow(QMainWindow):
         right_header.setContentsMargins(0, 0, 0, 0)
         right_header.setSpacing(6)
         right_icon = QLabel()
-        right_icon.setPixmap(self.style().standardIcon(QStyle.SP_FileDialogContentsView).pixmap(16, 16))
+        right_icon.setPixmap(
+            self.style().standardIcon(QStyle.SP_FileDialogContentsView).pixmap(16, 16)
+        )
         right_icon.setToolTip("Recent Scan Panel")
         right_header.addWidget(right_icon, 0)
         right_header.addStretch(1)
         right_header.addWidget(self.btn_save_files, 0)
-        right_header.addWidget(self.btn_xyz_toggle, 0) 
+        right_header.addWidget(self.btn_xyz_toggle, 0)
         right_header.addWidget(self.btn_upload_git, 0)
         right_layout.addLayout(right_header)
 
@@ -2545,7 +2740,9 @@ class MainWindow(QMainWindow):
         self.dock_settings = dock
         dock.setFeatures(QDockWidget.NoDockWidgetFeatures)
         dock.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
-        dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
+        dock.setFeatures(
+            QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable
+        )
         self.addDockWidget(Qt.RightDockWidgetArea, dock)
 
         w = QWidget()
@@ -2582,7 +2779,7 @@ class MainWindow(QMainWindow):
         row.addWidget(self.label_tol_indicator, 0)
         row.addWidget(self.label_tol_details, 1)
         vv.addLayout(row)
-        
+
         self.btn_diff_toggle = QPushButton("Diff 표시 OFF")
         self.btn_diff_toggle.setCheckable(True)
         self.btn_diff_toggle.clicked.connect(self.on_diff_toggle_clicked)
@@ -2626,9 +2823,18 @@ class MainWindow(QMainWindow):
 
         self.btn_diff_toggle.setIcon(self._icon_diff_gradient())
         self.btn_diff_toggle.setIconSize(QSize(18, 18))
-        self._set_btn_icon(self.btn_apply_tol, "dialog-ok-apply", QStyle.SP_DialogApplyButton, "허용오차 적용")
-        self._set_btn_icon(self.btn_apply_cam, "dialog-ok-apply", QStyle.SP_DialogApplyButton, "카메라 파라미터 적용")
-
+        self._set_btn_icon(
+            self.btn_apply_tol,
+            "dialog-ok-apply",
+            QStyle.SP_DialogApplyButton,
+            "허용오차 적용",
+        )
+        self._set_btn_icon(
+            self.btn_apply_cam,
+            "dialog-ok-apply",
+            QStyle.SP_DialogApplyButton,
+            "카메라 파라미터 적용",
+        )
 
         v.addWidget(gb_cam)
 
@@ -2639,7 +2845,9 @@ class MainWindow(QMainWindow):
         dock = QDockWidget("Log", self)
         self.dock_log = dock
         dock.setAllowedAreas(Qt.BottomDockWidgetArea | Qt.TopDockWidgetArea)
-        dock.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
+        dock.setFeatures(
+            QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable
+        )
         self.addDockWidget(Qt.BottomDockWidgetArea, dock)
 
         w = QWidget()
@@ -2653,18 +2861,24 @@ class MainWindow(QMainWindow):
         top.addWidget(btn_clear)
 
         btn_copy = QPushButton("Copy")
+
         def _copy():
             QGuiApplication.clipboard().setText(self.log_text.toPlainText())
+
         btn_copy.clicked.connect(_copy)
         top.addWidget(btn_copy)
 
         btn_save = QPushButton("Save .txt")
+
         def _save():
-            path, _ = QFileDialog.getSaveFileName(self, "Save Log", BASE_DIR, "Text Files (*.txt)")
+            path, _ = QFileDialog.getSaveFileName(
+                self, "Save Log", BASE_DIR, "Text Files (*.txt)"
+            )
             if path:
                 with open(path, "w", encoding="utf-8") as f:
                     f.write(self.log_text.toPlainText())
                 self.append_log(f"[INFO] 로그 저장: {path}")
+
         btn_save.clicked.connect(_save)
         top.addWidget(btn_save)
 
@@ -2675,7 +2889,7 @@ class MainWindow(QMainWindow):
 
         # ✅ 오른쪽 끝으로 밀기
         top.addStretch(1)
-        
+
         v.addLayout(top)
 
         self.log_text = QTextEdit()
@@ -2690,7 +2904,9 @@ class MainWindow(QMainWindow):
         dock_cam = QDockWidget("Camera", self)
         self.dock_camera = dock_cam
         dock_cam.setAllowedAreas(Qt.BottomDockWidgetArea | Qt.TopDockWidgetArea)
-        dock_cam.setFeatures(QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable)
+        dock_cam.setFeatures(
+            QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable
+        )
         self.addDockWidget(Qt.BottomDockWidgetArea, dock_cam)
         self.splitDockWidget(dock, dock_cam, Qt.Horizontal)  # ✅ 로그 폭을 반으로
 
@@ -2707,9 +2923,15 @@ class MainWindow(QMainWindow):
         cv.addStretch(1)
         dock_cam.setWidget(cw)
 
-        self._set_btn_icon(btn_clear, "edit-clear", QStyle.SP_TrashIcon, "로그 화면 지우기")
-        self._set_btn_icon(btn_copy, "edit-copy", QStyle.SP_FileDialogDetailedView, "로그 복사")
-        self._set_btn_icon(btn_save, "document-save", QStyle.SP_DialogSaveButton, "로그 텍스트 저장")
+        self._set_btn_icon(
+            btn_clear, "edit-clear", QStyle.SP_TrashIcon, "로그 화면 지우기"
+        )
+        self._set_btn_icon(
+            btn_copy, "edit-copy", QStyle.SP_FileDialogDetailedView, "로그 복사"
+        )
+        self._set_btn_icon(
+            btn_save, "document-save", QStyle.SP_DialogSaveButton, "로그 텍스트 저장"
+        )
 
     def _build_statusbar(self):
         self.statusBar().setStyleSheet("color:#d0d0d0;")
@@ -2722,7 +2944,13 @@ class MainWindow(QMainWindow):
             return ico
         return self.style().standardIcon(fallback_sp)
 
-    def _set_btn_icon(self, btn: QPushButton, theme_name: str, fallback_sp: QStyle.StandardPixmap, tip: str | None = None):
+    def _set_btn_icon(
+        self,
+        btn: QPushButton,
+        theme_name: str,
+        fallback_sp: QStyle.StandardPixmap,
+        tip: str | None = None,
+    ):
         btn.setIcon(self._icon(theme_name, fallback_sp))
         btn.setIconSize(QSize(18, 18))
         if tip:
@@ -2763,9 +2991,15 @@ class MainWindow(QMainWindow):
 
         # connect corners (back -> front)
         p.drawLine(QPointF(back.left(), back.top()), QPointF(front.left(), front.top()))
-        p.drawLine(QPointF(back.right(), back.top()), QPointF(front.right(), front.top()))
-        p.drawLine(QPointF(back.left(), back.bottom()), QPointF(front.left(), front.bottom()))
-        p.drawLine(QPointF(back.right(), back.bottom()), QPointF(front.right(), front.bottom()))
+        p.drawLine(
+            QPointF(back.right(), back.top()), QPointF(front.right(), front.top())
+        )
+        p.drawLine(
+            QPointF(back.left(), back.bottom()), QPointF(front.left(), front.bottom())
+        )
+        p.drawLine(
+            QPointF(back.right(), back.bottom()), QPointF(front.right(), front.bottom())
+        )
 
         p.end()
         return QIcon(pm)
@@ -2848,7 +3082,7 @@ class MainWindow(QMainWindow):
         rect = QRectF(pad, pad, size - pad * 2, size - pad * 2)
 
         grad = QLinearGradient(rect.topLeft(), rect.bottomRight())
-        grad.setColorAt(0.0, QColor(70, 200, 120))   # green
+        grad.setColorAt(0.0, QColor(70, 200, 120))  # green
         grad.setColorAt(1.0, QColor(245, 245, 245))  # white-ish
 
         p.setBrush(QBrush(grad))
@@ -2885,8 +3119,10 @@ class MainWindow(QMainWindow):
         p.drawRoundedRect(rect2, r, r)
 
         # small connector hint
-        p.drawLine(QPointF(rect1.right() - 2.0, rect1.center().y()),
-                QPointF(rect2.left() + 2.0, rect2.center().y()))
+        p.drawLine(
+            QPointF(rect1.right() - 2.0, rect1.center().y()),
+            QPointF(rect2.left() + 2.0, rect2.center().y()),
+        )
 
         p.end()
         return QIcon(pm)
@@ -2910,14 +3146,20 @@ class MainWindow(QMainWindow):
             self.resizeDocks([self.dock_log], [260], Qt.Vertical)
 
         # --- 하단 Camera dock 폭 고정 + 로그가 나머지 차지 ---
-        if hasattr(self, "dock_camera") and self.dock_camera is not None and hasattr(self, "dock_log"):
+        if (
+            hasattr(self, "dock_camera")
+            and self.dock_camera is not None
+            and hasattr(self, "dock_log")
+        ):
             cam_w = 320
             self.dock_camera.setMinimumWidth(cam_w)
             self.dock_camera.setMaximumWidth(cam_w)
 
             total_w = max(1, self.width())
             log_w = max(200, total_w - cam_w - 40)  # 약간의 여유
-            self.resizeDocks([self.dock_log, self.dock_camera], [log_w, cam_w], Qt.Horizontal)
+            self.resizeDocks(
+                [self.dock_log, self.dock_camera], [log_w, cam_w], Qt.Horizontal
+            )
 
         # --- 중앙 좌/우 기본 반반 (드래그 막았든 말았든 초기값 고정) ---
         if hasattr(self, "central_splitter") and self.central_splitter is not None:
@@ -2962,7 +3204,11 @@ class MainWindow(QMainWindow):
 
     def _on_window_state_changed(self):
         # 최대화에서 복원되면, 복원된 상태의 중앙 높이를 다시 "고정 기준"으로 잡아줌
-        if not self._is_max_like() and hasattr(self, "central_splitter") and self.central_splitter:
+        if (
+            not self._is_max_like()
+            and hasattr(self, "central_splitter")
+            and self.central_splitter
+        ):
             self._fixed_center_h = self.central_splitter.height()
         self._sync_docks_on_resize()
 
@@ -3020,7 +3266,11 @@ class MainWindow(QMainWindow):
     # ✅ 툴바/상태 표시 업데이트를 한 곳으로
     def _sync_top_labels(self):
         cmp = self.current_compare_name or "-"
-        last = "-" if self.last_capture_dt is None else self.last_capture_dt.strftime("%Y-%m-%d %H:%M:%S")
+        last = (
+            "-"
+            if self.last_capture_dt is None
+            else self.last_capture_dt.strftime("%Y-%m-%d %H:%M:%S")
+        )
 
         # GroupBox 타이틀 갱신(라벨 대신)
         if hasattr(self, "gb_compare") and self.gb_compare:
@@ -3103,7 +3353,9 @@ class MainWindow(QMainWindow):
             if result.returncode == 0:
                 self.append_log("[GIT] UploadGit.py 완료 (returncode=0)")
             else:
-                self.append_log(f"[GIT] UploadGit.py 실패 (returncode={result.returncode})")
+                self.append_log(
+                    f"[GIT] UploadGit.py 실패 (returncode={result.returncode})"
+                )
 
         except Exception as e:
             self.append_log(f"[ERROR] UploadGit.py 실행 중 예외: {e}")
@@ -3111,7 +3363,9 @@ class MainWindow(QMainWindow):
     # ===== 카메라 연결 =====
     def connect_camera(self):
         if not USE_REAL_CAMERA:
-            self.append_log("[INFO] (더미) 카메라 연결을 생략합니다. 샘플 파일 모드로 동작합니다.")
+            self.append_log(
+                "[INFO] (더미) 카메라 연결을 생략합니다. 샘플 파일 모드로 동작합니다."
+            )
             self.camera_connected = True
             self.btn_scan.setEnabled(True)
             return
@@ -3319,13 +3573,23 @@ class MainWindow(QMainWindow):
             self.append_log("[ERROR] 비교 데이터로 저장할 스캔이 없습니다.")
             return
 
-        self.compare_pointcloud = None if self.last_pointcloud is None else self.last_pointcloud.copy()
-        self.compare_colors = None if self.last_colors is None else self.last_colors.copy()
+        self.compare_pointcloud = (
+            None if self.last_pointcloud is None else self.last_pointcloud.copy()
+        )
+        self.compare_colors = (
+            None if self.last_colors is None else self.last_colors.copy()
+        )
 
-        self.compare_depth_array = None if self.last_depth_array is None else self.last_depth_array.copy()
-        self.compare_depth_qimage = None if self.last_depth_qimage is None else self.last_depth_qimage.copy()
+        self.compare_depth_array = (
+            None if self.last_depth_array is None else self.last_depth_array.copy()
+        )
+        self.compare_depth_qimage = (
+            None if self.last_depth_qimage is None else self.last_depth_qimage.copy()
+        )
 
-        self.compare_color_qimage = None if self.last_color_qimage is None else self.last_color_qimage.copy()
+        self.compare_color_qimage = (
+            None if self.last_color_qimage is None else self.last_color_qimage.copy()
+        )
 
         if self.btn_point.isChecked():
             self.update_compare_pointcloud_view()
@@ -3347,7 +3611,9 @@ class MainWindow(QMainWindow):
             and self.compare_depth_array is None
             and self.compare_color_qimage is None
         ):
-            self.append_log("[ERROR] 저장할 비교 데이터가 없습니다. 먼저 Define Compare Data를 수행하세요.")
+            self.append_log(
+                "[ERROR] 저장할 비교 데이터가 없습니다. 먼저 Define Compare Data를 수행하세요."
+            )
             return
 
         dlg = CompareSaveDialog(self)
@@ -3362,13 +3628,15 @@ class MainWindow(QMainWindow):
 
         try:
             self.save_compare_bundle(folder_name)
-            self.append_log(f"[INFO] 비교 데이터 저장 완료: {os.path.join(COMPARE_DIR, folder_name)}")
+            self.append_log(
+                f"[INFO] 비교 데이터 저장 완료: {os.path.join(COMPARE_DIR, folder_name)}"
+            )
 
             self.current_compare_name = folder_name  # 저장된 비교데이터 이름 = 폴더명
-            
+
         except Exception as e:
             self.append_log(f"[ERROR] 비교 데이터 저장 실패: {e}")
-        
+
     # ===== NEW: 저장된 비교데이터 불러오기 =====
     def on_load_compare_data_clicked(self):
         dlg = CompareLoadDialog(self)
@@ -3382,7 +3650,9 @@ class MainWindow(QMainWindow):
 
         try:
             self.load_compare_bundle(folder)
-            self.append_log(f"[INFO] 비교 데이터 불러오기 완료: {os.path.join(COMPARE_DIR, folder)}")
+            self.append_log(
+                f"[INFO] 비교 데이터 불러오기 완료: {os.path.join(COMPARE_DIR, folder)}"
+            )
 
             # 화면 갱신
             if self.btn_point.isChecked():
@@ -3602,7 +3872,9 @@ class MainWindow(QMainWindow):
                                 cols.append([r / 255.0, g / 255.0, b / 255.0])
                 if pts:
                     self.compare_pointcloud = np.array(pts, dtype=np.float32)
-                    self.compare_colors = np.array(cols, dtype=np.float32) if cols else None
+                    self.compare_colors = (
+                        np.array(cols, dtype=np.float32) if cols else None
+                    )
 
         # --- NEW: 허용오차 설정 불러오기(meta.json) ---
         if os.path.isfile(meta_path):
@@ -3626,7 +3898,9 @@ class MainWindow(QMainWindow):
                 if exposure_ms is not None:
                     self.edit_exposure_ms.setText(str(exposure_ms))
 
-                self.append_log("[COMPARE] META 로드 → 허용오차/카메라 파라미터 자동 Apply")
+                self.append_log(
+                    "[COMPARE] META 로드 → 허용오차/카메라 파라미터 자동 Apply"
+                )
 
                 # ✅ 허용오차 Apply 자동 실행
                 self.on_apply_tolerance_clicked()
@@ -3758,7 +4032,7 @@ class MainWindow(QMainWindow):
                 pts = pts.reshape(-1, 3)
 
             mask = np.isfinite(pts).all(axis=1)
-            mask &= (pts[:, 2] > 0)
+            mask &= pts[:, 2] > 0
             pts = pts[mask]
 
             self.last_pointcloud = pts
@@ -3801,10 +4075,7 @@ class MainWindow(QMainWindow):
                 self.last_depth_array = depth_np
                 rgb_uint8 = depth_to_color_image(depth_np)
                 h, w, _ = rgb_uint8.shape
-                qimg = QImage(
-                    rgb_uint8.data, w, h, 3 * w,
-                    QImage.Format_RGB888
-                ).copy()
+                qimg = QImage(rgb_uint8.data, w, h, 3 * w, QImage.Format_RGB888).copy()
                 self.last_depth_qimage = qimg
             else:
                 self.last_depth_array = None
@@ -3838,12 +4109,14 @@ class MainWindow(QMainWindow):
                     self.last_color_qimage = None
 
             if self.last_color_qimage is None:
-                self.append_log("[WARN] 샘플 2D 이미지 로드 실패: sampleimg.png 확인 필요")
+                self.append_log(
+                    "[WARN] 샘플 2D 이미지 로드 실패: sampleimg.png 확인 필요"
+                )
 
     # ===== 포인트 클라우드 뷰 갱신 =====
-    def _update_viewer_with_pointcloud(self, viewer: ScanViewer,
-                                       pts: np.ndarray | None,
-                                       cols: np.ndarray | None):
+    def _update_viewer_with_pointcloud(
+        self, viewer: ScanViewer, pts: np.ndarray | None, cols: np.ndarray | None
+    ):
         if pts is None or pts.size == 0:
             viewer.label.setText("유효 포인트 없음")
             viewer.label.show()
@@ -3903,58 +4176,58 @@ class MainWindow(QMainWindow):
         )
 
     # ===== QImage 뷰 갱신 공통 =====
-    def _update_viewer_with_qimage(self, viewer: ScanViewer, qimg: QImage | None, empty_text: str):
+    def _update_viewer_with_qimage(
+        self, viewer: ScanViewer, qimg: QImage | None, empty_text: str
+    ):
         viewer.show_qimage(qimg, empty_text)
 
     # --- 2D 이미지 ---
     def update_recent_image_view(self):
-        self._update_viewer_with_qimage(self.scan_viewer,
-                                        self.last_color_qimage,
-                                        "이미지 없음")
+        self._update_viewer_with_qimage(
+            self.scan_viewer, self.last_color_qimage, "이미지 없음"
+        )
 
     def update_compare_image_view(self):
-        self._update_viewer_with_qimage(self.compare_viewer,
-                                        self.compare_color_qimage,
-                                        "이미지 없음")
+        self._update_viewer_with_qimage(
+            self.compare_viewer, self.compare_color_qimage, "이미지 없음"
+        )
 
     # --- 뎁스 ---
     def update_recent_depth_view(self):
         if (
-            self.show_diff_overlay and
-            self.compare_depth_array is not None and
-            self.last_depth_array is not None
+            self.show_diff_overlay
+            and self.compare_depth_array is not None
+            and self.last_depth_array is not None
         ):
             qimg_diff = self.make_diff_depth_qimage()
             if qimg_diff is not None:
-                self._update_viewer_with_qimage(self.scan_viewer,
-                                                qimg_diff,
-                                                "뎁스 데이터 없음")
+                self._update_viewer_with_qimage(
+                    self.scan_viewer, qimg_diff, "뎁스 데이터 없음"
+                )
                 return
 
-        self._update_viewer_with_qimage(self.scan_viewer,
-                                        self.last_depth_qimage,
-                                        "뎁스 데이터 없음")
+        self._update_viewer_with_qimage(
+            self.scan_viewer, self.last_depth_qimage, "뎁스 데이터 없음"
+        )
 
     def update_compare_depth_view(self):
-        self._update_viewer_with_qimage(self.compare_viewer,
-                                        self.compare_depth_qimage,
-                                        "뎁스 데이터 없음")
+        self._update_viewer_with_qimage(
+            self.compare_viewer, self.compare_depth_qimage, "뎁스 데이터 없음"
+        )
 
     def update_recent_pointcloud_diff_view(self):
         res = self.make_pointcloud_diff_for_view()
         if res is None:
-            self.append_log("[WARN] Point diff 뷰 생성 실패 - 일반 포인트 표시로 대체합니다.")
+            self.append_log(
+                "[WARN] Point diff 뷰 생성 실패 - 일반 포인트 표시로 대체합니다."
+            )
             self.update_recent_pointcloud_view()
             return
 
         pts_aligned, colors = res
-        self._update_viewer_with_pointcloud(
-            self.scan_viewer, pts_aligned, colors
-        )
+        self._update_viewer_with_pointcloud(self.scan_viewer, pts_aligned, colors)
 
-    def compute_depth_diff_stats(self,
-                                 ref_depth: np.ndarray,
-                                 cur_depth: np.ndarray):
+    def compute_depth_diff_stats(self, ref_depth: np.ndarray, cur_depth: np.ndarray):
         if ref_depth is None or cur_depth is None:
             return None
 
@@ -4004,9 +4277,9 @@ class MainWindow(QMainWindow):
         # 반환 diff_ratio 자리에 blob 기반 cluster_ratio를 넣는다
         return mean_cm, max_cm, overall_ratio, threshold_mm
 
-    def compute_pointcloud_diff_stats(self,
-                                      ref_pts: np.ndarray | None,
-                                      cur_pts: np.ndarray | None):
+    def compute_pointcloud_diff_stats(
+        self, ref_pts: np.ndarray | None, cur_pts: np.ndarray | None
+    ):
         if o3d is None:
             self.append_log("[WARN] open3d 미설치 - 포인트 클라우드 비교를 건너뜁니다.")
             return None
@@ -4040,15 +4313,13 @@ class MainWindow(QMainWindow):
             pcd_ref,
             align_dist_mm,
             np.eye(4),
-            o3d.pipelines.registration.TransformationEstimationPointToPoint()
+            o3d.pipelines.registration.TransformationEstimationPointToPoint(),
         )
         T = reg.transformation
 
         self.append_log(
             "[DEBUG] ICP 정합: fitness={:.3f}, rmse={:.3f}, 이동={:.2f}mm".format(
-                reg.fitness,
-                reg.inlier_rmse,
-                np.linalg.norm(T[:3, 3])
+                reg.fitness, reg.inlier_rmse, np.linalg.norm(T[:3, 3])
             )
         )
 
@@ -4056,8 +4327,12 @@ class MainWindow(QMainWindow):
         pcd_cur_aligned.transform(T)
 
         # --- 거리 계산(양방향) ---
-        d_cur_to_ref = np.asarray(pcd_cur_aligned.compute_point_cloud_distance(pcd_ref), dtype=np.float32)
-        d_ref_to_cur = np.asarray(pcd_ref.compute_point_cloud_distance(pcd_cur_aligned), dtype=np.float32)
+        d_cur_to_ref = np.asarray(
+            pcd_cur_aligned.compute_point_cloud_distance(pcd_ref), dtype=np.float32
+        )
+        d_ref_to_cur = np.asarray(
+            pcd_ref.compute_point_cloud_distance(pcd_cur_aligned), dtype=np.float32
+        )
 
         if d_cur_to_ref.size == 0 or d_ref_to_cur.size == 0:
             return None
@@ -4083,7 +4358,7 @@ class MainWindow(QMainWindow):
 
         # 반환의 diff_ratio 자리에 cluster_ratio를 넣는다 (기존 UI/판정 로직 그대로 재사용)
         return mean_cm, max_cm, overall_ratio, threshold_mm
-    
+
     def make_diff_depth_qimage(self) -> QImage | None:
         if self.compare_depth_array is None or self.last_depth_array is None:
             return None
@@ -4196,15 +4471,13 @@ class MainWindow(QMainWindow):
             pcd_ref,
             align_dist_mm,
             np.eye(4),
-            o3d.pipelines.registration.TransformationEstimationPointToPoint()
+            o3d.pipelines.registration.TransformationEstimationPointToPoint(),
         )
 
         T = reg.transformation
         self.append_log(
             "[DEBUG] (PointDiff) ICP: fitness={:.3f}, rmse={:.3f}, 이동={:.2f}mm".format(
-                reg.fitness,
-                reg.inlier_rmse,
-                np.linalg.norm(T[:3, 3])
+                reg.fitness, reg.inlier_rmse, np.linalg.norm(T[:3, 3])
             )
         )
 
@@ -4216,12 +4489,8 @@ class MainWindow(QMainWindow):
         if pts_cur.size == 0 or pts_ref.size == 0:
             return None
 
-        d_cur_to_ref = np.asarray(
-            pcd_cur_aligned.compute_point_cloud_distance(pcd_ref)
-        )
-        d_ref_to_cur = np.asarray(
-            pcd_ref.compute_point_cloud_distance(pcd_cur_aligned)
-        )
+        d_cur_to_ref = np.asarray(pcd_cur_aligned.compute_point_cloud_distance(pcd_ref))
+        d_ref_to_cur = np.asarray(pcd_ref.compute_point_cloud_distance(pcd_cur_aligned))
 
         threshold_mm = self.get_threshold_mm()
 
@@ -4267,7 +4536,9 @@ class MainWindow(QMainWindow):
                 raise ValueError
             return val
         except ValueError:
-            self.append_log("[WARN] 오차 거리(mm) 입력이 잘못되어 기본값 10mm를 사용합니다.")
+            self.append_log(
+                "[WARN] 오차 거리(mm) 입력이 잘못되어 기본값 10mm를 사용합니다."
+            )
             self.edit_tol_distance.setText("10")
             return default
 
@@ -4285,7 +4556,9 @@ class MainWindow(QMainWindow):
                 raise ValueError
             return val_percent / 100.0
         except ValueError:
-            self.append_log(f"[WARN] 오차 비율(%) 입력이 잘못되어 기본값 {default*100:.0f}%를 사용합니다.")
+            self.append_log(
+                f"[WARN] 오차 비율(%) 입력이 잘못되어 기본값 {default*100:.0f}%를 사용합니다."
+            )
             self.edit_tol_ratio.setText(str(int(default * 100)))
             return default
 
@@ -4359,7 +4632,7 @@ class MainWindow(QMainWindow):
                     "- Define/Load Compare 후 Scan하세요."
                 )
             return
-        
+
         mean_cm, max_cm, diff_ratio, threshold_mm = result
 
         thr_mm = self.get_threshold_mm()
@@ -4367,21 +4640,21 @@ class MainWindow(QMainWindow):
 
         # ✅ 표시용 값(mm)
         mean_mm_disp = float(mean_cm * 10.0)
-        max_mm_disp  = float(max_cm * 10.0)
+        max_mm_disp = float(max_cm * 10.0)
 
         # ✅ 어떤 소스를 썼는지
         src = "Point" if pc_result is not None else "Depth"
 
         # ✅ 소스별 largest 값 가져오기
         if src == "Point":
-            min_mm_disp  = float(getattr(self, "_last_point_min_mm", 0.0))
+            min_mm_disp = float(getattr(self, "_last_point_min_mm", 0.0))
             mean_mm_disp = float(getattr(self, "_last_point_mean_mm", mean_cm * 10.0))
-            max_mm_disp  = float(getattr(self, "_last_point_max_mm",  max_cm * 10.0))
+            max_mm_disp = float(getattr(self, "_last_point_max_mm", max_cm * 10.0))
         else:
-            min_mm_disp  = float(getattr(self, "_last_point_min_mm", 0.0))
+            min_mm_disp = float(getattr(self, "_last_point_min_mm", 0.0))
             mean_mm_disp = float(getattr(self, "_last_point_mean_mm", mean_cm * 10.0))
-            max_mm_disp  = float(getattr(self, "_last_point_max_mm",  max_cm * 10.0))
-        
+            max_mm_disp = float(getattr(self, "_last_point_max_mm", max_cm * 10.0))
+
         # ✅ 상세 라벨 갱신
         if hasattr(self, "label_tol_details") and self.label_tol_details:
             self.label_tol_details.setText(
@@ -4440,7 +4713,9 @@ class MainWindow(QMainWindow):
                 raise ValueError
             # 권장 범위(0~16) 안내용 클램프 (원하면 제거 가능)
             if v > 16:
-                self.append_log("[WARN] 게인 값이 16dB를 초과했습니다. 16으로 제한합니다.")
+                self.append_log(
+                    "[WARN] 게인 값이 16dB를 초과했습니다. 16으로 제한합니다."
+                )
                 v = 16.0
                 self.edit_gain_db.setText("16")
             return v
@@ -4460,7 +4735,9 @@ class MainWindow(QMainWindow):
                 raise ValueError
             return v
         except Exception:
-            self.append_log("[WARN] 노출(ms) 입력이 잘못되어 기본값 6.0ms를 사용합니다.")
+            self.append_log(
+                "[WARN] 노출(ms) 입력이 잘못되어 기본값 6.0ms를 사용합니다."
+            )
             self.edit_exposure_ms.setText("6.0")
             return default
 
@@ -4469,10 +4746,14 @@ class MainWindow(QMainWindow):
         gain_db = self._get_gain_db()
         exp_ms = self._get_exposure_ms()
 
-        self.append_log(f"[INFO] 카메라 파라미터 적용: gain={gain_db:.2f} dB, exposure={exp_ms:.2f} ms (2D/3D 동일)")
+        self.append_log(
+            f"[INFO] 카메라 파라미터 적용: gain={gain_db:.2f} dB, exposure={exp_ms:.2f} ms (2D/3D 동일)"
+        )
 
         if not USE_REAL_CAMERA:
-            self.append_log("[INFO] 샘플 모드(USE_REAL_CAMERA=False) → 실제 카메라 적용은 생략합니다.")
+            self.append_log(
+                "[INFO] 샘플 모드(USE_REAL_CAMERA=False) → 실제 카메라 적용은 생략합니다."
+            )
             return
 
         if not self.camera_connected or self.camera is None:
@@ -4493,19 +4774,27 @@ class MainWindow(QMainWindow):
             user_set = self.camera.current_user_set()
 
             # --- 3D Exposure (Sequence) ---
-            err = user_set.set_float_array_value(Scanning3DExposureSequence.name, [float(exposure_ms)])
+            err = user_set.set_float_array_value(
+                Scanning3DExposureSequence.name, [float(exposure_ms)]
+            )
             show_error(err)
             self.append_log(f"[OK] 3D ExposureSequence = [{exposure_ms}] ms")
 
             # --- 2D ExposureMode / ExposureTime ---
             try:
-                err = user_set.set_enum_value(Scanning2DExposureMode.name, Scanning2DExposureMode.Value_Timed)
+                err = user_set.set_enum_value(
+                    Scanning2DExposureMode.name, Scanning2DExposureMode.Value_Timed
+                )
                 show_error(err)
             except Exception as e:
-                self.append_log(f"[WARN] 2D ExposureMode(Timed) 설정 실패(모델/SDK 차이): {e}")
+                self.append_log(
+                    f"[WARN] 2D ExposureMode(Timed) 설정 실패(모델/SDK 차이): {e}"
+                )
 
             try:
-                err = user_set.set_float_value(Scanning2DExposureTime.name, float(exposure_ms))
+                err = user_set.set_float_value(
+                    Scanning2DExposureTime.name, float(exposure_ms)
+                )
                 show_error(err)
                 self.append_log(f"[OK] 2D ExposureTime = {exposure_ms} ms")
             except Exception as e:
@@ -4539,11 +4828,16 @@ class MainWindow(QMainWindow):
                     continue
 
             if not applied:
-                self.append_log("[WARN] 3D Gain 파라미터를 찾지 못했거나 적용 실패했습니다. (Scanning3DGain/Scan3DGain 확인 필요)")
+                self.append_log(
+                    "[WARN] 3D Gain 파라미터를 찾지 못했거나 적용 실패했습니다. (Scanning3DGain/Scan3DGain 확인 필요)"
+                )
 
             # --- 저장 ---
             try:
-                show_error(user_set.save_all_parameters_to_device(), "\nSave the current parameter settings to the selected user set.")
+                show_error(
+                    user_set.save_all_parameters_to_device(),
+                    "\nSave the current parameter settings to the selected user set.",
+                )
                 self.append_log("[OK] UserSet 저장 완료")
             except Exception as e:
                 self.append_log(f"[WARN] UserSet 저장 실패(권한/모델 차이): {e}")
@@ -4580,13 +4874,19 @@ class MainWindow(QMainWindow):
         limit_ratio = float(self.get_allow_ratio())
 
         # --- Point 우선 (open3d 필요) ---
-        if o3d is not None and self.compare_pointcloud is not None and self.last_pointcloud is not None:
-            pc = self.compute_pointcloud_diff_stats(self.compare_pointcloud, self.last_pointcloud)
+        if (
+            o3d is not None
+            and self.compare_pointcloud is not None
+            and self.last_pointcloud is not None
+        ):
+            pc = self.compute_pointcloud_diff_stats(
+                self.compare_pointcloud, self.last_pointcloud
+            )
             if pc is not None:
                 mean_cm, max_cm, ratio, thr_mm = pc
                 mean_mm = float(getattr(self, "_last_point_mean_mm", mean_cm * 10.0))
-                min_mm  = float(getattr(self, "_last_point_min_mm", 0.0))
-                max_mm  = float(getattr(self, "_last_point_max_mm", max_cm * 10.0))
+                min_mm = float(getattr(self, "_last_point_min_mm", 0.0))
+                max_mm = float(getattr(self, "_last_point_max_mm", max_cm * 10.0))
 
                 verdict = "V" if (mean_mm < thr_mm) and (ratio < limit_ratio) else "X"
 
@@ -4595,7 +4895,7 @@ class MainWindow(QMainWindow):
                     "min_mm": min_mm,
                     "mean_mm": mean_mm,
                     "max_mm": max_mm,
-                    "ratio": float(ratio), 
+                    "ratio": float(ratio),
                     "thr_mm": float(thr_mm),
                     "limit_ratio": float(limit_ratio),
                     "verdict": verdict,
@@ -4603,12 +4903,14 @@ class MainWindow(QMainWindow):
 
         # --- Depth (open3d 없어도 가능) ---
         if self.compare_depth_array is not None and self.last_depth_array is not None:
-            depth = self.compute_depth_diff_stats(self.compare_depth_array, self.last_depth_array)
+            depth = self.compute_depth_diff_stats(
+                self.compare_depth_array, self.last_depth_array
+            )
             if depth is not None:
                 mean_cm, max_cm, ratio, thr_mm = depth
                 mean_mm = float(getattr(self, "_last_depth_mean_mm", mean_cm * 10.0))
-                min_mm  = float(getattr(self, "_last_depth_min_mm", 0.0))
-                max_mm  = float(getattr(self, "_last_depth_max_mm", max_cm * 10.0))
+                min_mm = float(getattr(self, "_last_depth_min_mm", 0.0))
+                max_mm = float(getattr(self, "_last_depth_max_mm", max_cm * 10.0))
 
                 verdict = "V" if (mean_mm < thr_mm) and (ratio < limit_ratio) else "X"
                 return {
@@ -4616,7 +4918,7 @@ class MainWindow(QMainWindow):
                     "min_mm": min_mm,
                     "mean_mm": mean_mm,
                     "max_mm": max_mm,
-                    "ratio": float(ratio),      # ✅ 이제 '최대 blob 비율'
+                    "ratio": float(ratio),  # ✅ 이제 '최대 blob 비율'
                     "thr_mm": float(thr_mm),
                     "limit_ratio": float(limit_ratio),
                     "verdict": verdict,
@@ -4728,7 +5030,9 @@ class MainWindow(QMainWindow):
         - openpyxl 없으면 스킵
         """
         if openpyxl is None:
-            self.append_log("[WARN] openpyxl 미설치 → 엑셀 로그 저장을 건너뜁니다. (pip install openpyxl)")
+            self.append_log(
+                "[WARN] openpyxl 미설치 → 엑셀 로그 저장을 건너뜁니다. (pip install openpyxl)"
+            )
             return
 
         os.makedirs(ERROR_LOG_DIR, exist_ok=True)
@@ -4739,13 +5043,17 @@ class MainWindow(QMainWindow):
         xlsx_path = os.path.join(ERROR_LOG_DIR, f"{date_str}.xlsx")
 
         headers = [
-            "년월일", "시분초",
+            "년월일",
+            "시분초",
             "사용된 비교데이터",
             "합격/불합격",
-            "적용 오차거리(mm)", "적용 오차비율(%)",
-            "판정 오차거리 최소(mm)", "판정 오차거리 평균(mm)", "판정 오차거리 최대(mm)",
+            "적용 오차거리(mm)",
+            "적용 오차비율(%)",
+            "판정 오차거리 최소(mm)",
+            "판정 오차거리 평균(mm)",
+            "판정 오차거리 최대(mm)",
             "판정 오차비율(%)",
-            "판정 소스(Point)"
+            "판정 소스(Point)",
         ]
 
         # 파일 열기/생성
@@ -4778,13 +5086,17 @@ class MainWindow(QMainWindow):
         src = stats.get("src", "")
 
         row_values = [
-            date_str, time_str,
+            date_str,
+            time_str,
             compare_name,
             verdict,
-            round(thr_mm, 3), round(ratio_limit_pct, 3),
-            round(min_mm, 3), round(mean_mm, 3), round(max_mm, 3),
+            round(thr_mm, 3),
+            round(ratio_limit_pct, 3),
+            round(min_mm, 3),
+            round(mean_mm, 3),
+            round(max_mm, 3),
             round(ratio_pct, 3),
-            src
+            src,
         ]
 
         # 같은 시각(HHMMSS) 행이 있으면 갱신, 없으면 append
@@ -4803,7 +5115,9 @@ class MainWindow(QMainWindow):
                 ws.cell(row=target_row, column=c).value = v
 
         wb.save(xlsx_path)
-        self.append_log(f"[ERROR-LOG] 엑셀 기록 완료: {xlsx_path} (time={time_str}, verdict={verdict})")
+        self.append_log(
+            f"[ERROR-LOG] 엑셀 기록 완료: {xlsx_path} (time={time_str}, verdict={verdict})"
+        )
 
     def _handle_error_on_scan_if_needed(self):
         """
@@ -4844,13 +5158,17 @@ class MainWindow(QMainWindow):
 
         # 없으면 헤더만 있는 빈 파일 생성
         headers = [
-            "년월일", "시분초",
+            "년월일",
+            "시분초",
             "사용된 비교데이터",
             "합격/불합격",
-            "적용 오차거리(mm)", "적용 오차비율(%)",
-            "판정 오차거리 최소(mm)", "판정 오차거리 평균(mm)", "판정 오차거리 최대(mm)",
+            "적용 오차거리(mm)",
+            "적용 오차비율(%)",
+            "판정 오차거리 최소(mm)",
+            "판정 오차거리 평균(mm)",
+            "판정 오차거리 최대(mm)",
             "판정 오차비율(%)",
-            "판정 소스(Point)"
+            "판정 소스(Point)",
         ]
 
         wb = Workbook()
@@ -4862,7 +5180,9 @@ class MainWindow(QMainWindow):
             cell = ws.cell(row=1, column=col)
             cell.font = Font(bold=True)
             cell.alignment = Alignment(horizontal="center", vertical="center")
-            ws.column_dimensions[get_column_letter(col)].width = max(14, len(str(h)) + 2)
+            ws.column_dimensions[get_column_letter(col)].width = max(
+                14, len(str(h)) + 2
+            )
         ws.freeze_panes = "A2"
 
         wb.save(xlsx_path)
@@ -4892,8 +5212,11 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         reply = QMessageBox.question(
-            self, "Exit", "프로그램을 종료하시겠습니까?",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+            self,
+            "Exit",
+            "프로그램을 종료하시겠습니까?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
         )
         if reply == QMessageBox.Yes:
             event.accept()
