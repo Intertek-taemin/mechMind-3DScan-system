@@ -1,0 +1,8 @@
+{
+  "tol_distance_mm": 10.0,
+  "tol_ratio_percent": 2.0,
+  "gain_db": 12.0,
+  "exposure_ms": 6.0,
+  "saved_at": "2025-12-16 15:04:26",
+  "bundle_name": "01_test1"
+}

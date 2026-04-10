@@ -1,0 +1,15 @@
+pip install MechEyeAPI
+
+pip install opencv-python
+
+pip install PySide6
+
+pip install numpy
+
+pip install open3d
+
+pip install pyqtgraph
+
+pip install PyOpenGL
+
+pip install Pillow

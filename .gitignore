@@ -1,0 +1,14 @@
+mm3dc/Lib/site-packages/
+setup/
+result/
+__pycache__/
+*.py[cod]
+*.pt
+*.onnx
+*.ply
+*.pcd
+*.pak
+*.dll
+*.exe
+.venv/
+venv/
