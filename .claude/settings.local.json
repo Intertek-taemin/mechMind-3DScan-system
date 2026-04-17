@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"from mecheye.shared import show_error, ErrorStatus; help\\(show_error\\)\")"
+    ]
+  }
+}

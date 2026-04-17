@@ -13,3 +13,5 @@ pip install pyqtgraph
 pip install PyOpenGL
 
 pip install Pillow
+
+pip install openpyxl

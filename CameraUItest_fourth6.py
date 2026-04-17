@@ -65,6 +65,7 @@ from PySide6.QtCore import (
     QEvent,
     QTimer,
     QPoint,
+    QRect,
     QAbstractTableModel,
     QModelIndex,
     QSize,
@@ -912,8 +913,16 @@ class VirtualKeyboardManager(QObject):
         self.parent_window = parent_window
 
         # ✅ 전역 키보드 1개만 만들기
+        # parent=None: 어떤 창에도 종속되지 않는 최상위 창으로 생성
+        # → dialog가 닫혀도 키보드가 같이 소멸되는 버그 방지
         if VirtualKeyboardManager._GLOBAL_KB is None:
-            VirtualKeyboardManager._GLOBAL_KB = VirtualKeyboard(parent_window)
+            VirtualKeyboardManager._GLOBAL_KB = VirtualKeyboard(None)
+            VirtualKeyboardManager._GLOBAL_KB.setWindowFlags(
+                Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+            )
+            VirtualKeyboardManager._GLOBAL_KB.setAttribute(
+                Qt.WA_ShowWithoutActivating, True
+            )
             # requestHide는 "현재 owner"의 hide를 호출하게 연결 (1회만)
             VirtualKeyboardManager._GLOBAL_KB.requestHide.connect(
                 lambda: (
@@ -970,15 +979,9 @@ class VirtualKeyboardManager(QObject):
 
         VirtualKeyboardManager._GLOBAL_OWNER = self
 
-        # ✅ 키보드를 현재 창에 “붙이기” (parent_window가 다르면 재부모화)
-        #    (네가 찾은 해결: parent_window 붙여야 좌상단 고정 문제가 줄었지)
-        if self.kb.parent() is not self.parent_window:
-            self.kb.setParent(self.parent_window)
-            self.kb.setWindowFlags(
-                Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
-            )
-            self.kb.setAttribute(Qt.WA_ShowWithoutActivating, True)
-
+        # ✅ 키보드는 parent=None 으로 생성된 독립 최상위 창
+        # → setParent() 재부모화를 하지 않음
+        # (재부모화 시 dialog 닫힐 때 키보드도 소멸 → _GLOBAL_KB C++ 객체 무효화 크래시)
         self.kb.attach(target, mode)
         self.kb.adjustSize()
         QApplication.processEvents()  # ✅ 네가 찾은 정답 유지
@@ -1426,6 +1429,261 @@ class CompareLoadDialog(QDialog):
         self.accept()
 
 
+# 슬롯별 ROI 색상 (R, G, B)
+_ROI_COLORS = [
+    (255, 60,  60),   # ROI 1 — 빨강
+    (220, 200,  0),   # ROI 2 — 노랑
+    (0,  210, 230),   # ROI 3 — 하늘
+]
+_ROI_LABELS = ["ROI 1", "ROI 2", "ROI 3"]
+MAX_ROI_COUNT = 3
+
+
+class _ROICanvas(QLabel):
+    """비교 이미지 위에서 마우스 드래그로 최대 3개 ROI를 선택하는 캔버스."""
+
+    roisChanged = Signal(object)  # list[tuple | None] — 3 슬롯
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAlignment(Qt.AlignCenter)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setMouseTracking(True)
+        self._src_image: QImage | None = None
+        # 최대 MAX_ROI_COUNT 개 슬롯. None = 미설정
+        self._rois: list[tuple | None] = [None] * MAX_ROI_COUNT
+        self._active_idx: int = 0          # 현재 그리기 대상 슬롯
+        self._drag_start: QPoint | None = None
+        self._drag_rect: QRect | None = None
+
+    # ── public ──────────────────────────────────────────────────────────
+    def set_image(self, image: QImage):
+        self._src_image = image
+        self._repaint_base()
+
+    def set_active_idx(self, idx: int):
+        self._active_idx = max(0, min(idx, MAX_ROI_COUNT - 1))
+
+    def set_rois(self, rois: "list[tuple]"):
+        """외부에서 초기값 설정."""
+        self._rois = [None] * MAX_ROI_COUNT
+        for i, r in enumerate(rois[:MAX_ROI_COUNT]):
+            self._rois[i] = tuple(r) if r else None
+        self._repaint_base()
+
+    def clear_active(self):
+        self._rois[self._active_idx] = None
+        self._drag_rect = None
+        self._repaint_base()
+        self.roisChanged.emit(list(self._rois))
+
+    def clear_all(self):
+        self._rois = [None] * MAX_ROI_COUNT
+        self._drag_rect = None
+        self._repaint_base()
+        self.roisChanged.emit(list(self._rois))
+
+    # ── geometry ────────────────────────────────────────────────────────
+    def _img_rect(self) -> QRect | None:
+        if self._src_image is None:
+            return None
+        iw, ih = self._src_image.width(), self._src_image.height()
+        if iw <= 0 or ih <= 0:
+            return None
+        ww, wh = self.width(), self.height()
+        scale = min(ww / iw, wh / ih)
+        dw, dh = int(iw * scale), int(ih * scale)
+        return QRect((ww - dw) // 2, (wh - dh) // 2, dw, dh)
+
+    def _widget_to_image(self, pt: QPoint) -> "tuple[int,int] | None":
+        r = self._img_rect()
+        if r is None or self._src_image is None:
+            return None
+        iw, ih = self._src_image.width(), self._src_image.height()
+        ix = int((pt.x() - r.x()) * iw / max(1, r.width()))
+        iy = int((pt.y() - r.y()) * ih / max(1, r.height()))
+        return (ix, iy)
+
+    # ── drawing ─────────────────────────────────────────────────────────
+    def _repaint_base(self):
+        if self._src_image is None:
+            self.setText("이미지 없음 — ROI 지정 불가")
+            self.setPixmap(QPixmap())
+            return
+        pixmap = QPixmap.fromImage(self._src_image)
+        lw = max(2, pixmap.width() // 300)
+        p = QPainter(pixmap)
+        for i, roi in enumerate(self._rois):
+            if roi is None:
+                continue
+            x, y, w, h = roi
+            rc, gc, bc = _ROI_COLORS[i]
+            p.setPen(QPen(QColor(rc, gc, bc), lw, Qt.DashLine))
+            p.setBrush(QBrush(QColor(rc, gc, bc, 35)))
+            p.drawRect(x, y, w, h)
+            # 슬롯 번호 라벨
+            p.setPen(QPen(QColor(rc, gc, bc)))
+            p.drawText(x + 4, y + 14, _ROI_LABELS[i])
+        p.end()
+        scaled = pixmap.scaled(self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.setPixmap(scaled)
+
+    # ── mouse ────────────────────────────────────────────────────────────
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_start = event.pos()
+            self._drag_rect = None
+        elif event.button() == Qt.RightButton:
+            self.clear_active()
+
+    def mouseMoveEvent(self, event):
+        if self._drag_start is not None:
+            self._drag_rect = QRect(self._drag_start, event.pos()).normalized()
+            self.update()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() != Qt.LeftButton or self._drag_start is None:
+            return
+        drag = QRect(self._drag_start, event.pos()).normalized()
+        self._drag_start = None
+        self._drag_rect = None
+        if drag.width() < 5 or drag.height() < 5:
+            self.update()
+            return
+        r = self._img_rect()
+        if r is None or self._src_image is None:
+            return
+        iw, ih = self._src_image.width(), self._src_image.height()
+        sx = iw / max(1, r.width())
+        sy = ih / max(1, r.height())
+        x = max(0, min(int((drag.x() - r.x()) * sx), iw - 1))
+        y = max(0, min(int((drag.y() - r.y()) * sy), ih - 1))
+        w = min(int(drag.width() * sx), iw - x)
+        h = min(int(drag.height() * sy), ih - y)
+        if w > 0 and h > 0:
+            self._rois[self._active_idx] = (x, y, w, h)
+            self._repaint_base()
+            self.roisChanged.emit(list(self._rois))
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if self._drag_rect is not None:
+            rc, gc, bc = _ROI_COLORS[self._active_idx]
+            p = QPainter(self)
+            p.setPen(QPen(QColor(rc, gc, bc), 2, Qt.DashLine))
+            p.setBrush(QBrush(QColor(rc, gc, bc, 30)))
+            p.drawRect(self._drag_rect)
+            p.end()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._repaint_base()
+
+
+class ROISelectDialog(QDialog):
+    """비교 데이터별 검사 영역(ROI)을 최대 3개 지정."""
+
+    def __init__(self, image: "QImage | None", current_rois: "list[tuple]|None" = None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("검사 영역(ROI) 지정 — 최대 3개")
+        self.resize(900, 660)
+        self.setMinimumSize(450, 340)
+        # selected_rois: 비어있지 않은 ROI만 담은 리스트
+        self.selected_rois: list[tuple] = list(current_rois) if current_rois else []
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(6)
+
+        # 안내
+        hint = QLabel(
+            "슬롯 버튼을 선택한 뒤 이미지에서 드래그하여 영역을 지정하세요.  "
+            "우클릭으로 해당 슬롯 초기화."
+        )
+        hint.setStyleSheet("color:white;")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        # 슬롯 선택 버튼 행
+        slot_row = QHBoxLayout()
+        self._slot_btns: list[QPushButton] = []
+        for i in range(MAX_ROI_COUNT):
+            rc, gc, bc = _ROI_COLORS[i]
+            btn = QPushButton(f"  {_ROI_LABELS[i]}  ")
+            btn.setCheckable(True)
+            btn.setStyleSheet(
+                f"QPushButton {{ background: rgb({rc},{gc},{bc}); color:black; "
+                f"font-weight:bold; border-radius:6px; padding:6px 12px; }}"
+                f"QPushButton:checked {{ border: 3px solid white; }}"
+            )
+            btn.clicked.connect(lambda _, idx=i: self._select_slot(idx))
+            slot_row.addWidget(btn)
+            self._slot_btns.append(btn)
+        slot_row.addStretch(1)
+        layout.addLayout(slot_row)
+
+        # 캔버스
+        self._canvas = _ROICanvas(self)
+        layout.addWidget(self._canvas, 1)
+
+        # ROI 좌표 표시
+        self.lbl_rois = QLabel("")
+        self.lbl_rois.setStyleSheet("color:#ccffcc; font-size:12px;")
+        self.lbl_rois.setWordWrap(True)
+        layout.addWidget(self.lbl_rois)
+
+        # 버튼 행
+        btn_row = QHBoxLayout()
+        btn_clear_sel = QPushButton("선택 슬롯 초기화")
+        btn_clear_sel.clicked.connect(lambda: self._canvas.clear_active())
+        btn_clear_all = QPushButton("전체 초기화")
+        btn_clear_all.clicked.connect(lambda: self._canvas.clear_all())
+        btn_ok = QPushButton("적용")
+        btn_ok.setStyleSheet("background:#4CAF50; color:white;")
+        btn_ok.clicked.connect(self.accept)
+        btn_cancel = QPushButton("취소")
+        btn_cancel.clicked.connect(self.reject)
+        btn_row.addWidget(btn_clear_sel)
+        btn_row.addWidget(btn_clear_all)
+        btn_row.addStretch(1)
+        btn_row.addWidget(btn_cancel)
+        btn_row.addWidget(btn_ok)
+        layout.addLayout(btn_row)
+
+        pal = self.palette()
+        pal.setColor(QPalette.Window, QColor(55, 55, 55))
+        self.setAutoFillBackground(True)
+        self.setPalette(pal)
+
+        self._canvas.roisChanged.connect(self._on_rois_changed)
+        if image is not None:
+            self._canvas.set_image(image)
+        if current_rois:
+            self._canvas.set_rois(current_rois)
+        self._select_slot(0)
+        self._update_label(self._canvas._rois)
+
+    # ── slots ────────────────────────────────────────────────────────────
+    def _select_slot(self, idx: int):
+        self._canvas.set_active_idx(idx)
+        for i, btn in enumerate(self._slot_btns):
+            btn.setChecked(i == idx)
+
+    def _on_rois_changed(self, rois: list):
+        self.selected_rois = [r for r in rois if r is not None]
+        self._update_label(rois)
+
+    def _update_label(self, rois: list):
+        lines = []
+        for i, r in enumerate(rois):
+            if r is not None:
+                x, y, w, h = r
+                lines.append(f"{_ROI_LABELS[i]}: x={x}, y={y}, 너비={w}px, 높이={h}px")
+            else:
+                lines.append(f"{_ROI_LABELS[i]}: 미설정")
+        self.lbl_rois.setText("   |   ".join(lines))
+
+
 class ExcelTableModel(QAbstractTableModel):
     def __init__(self, headers: list[str], rows: list[list], parent=None):
         super().__init__(parent)
@@ -1812,6 +2070,9 @@ class ScanViewer(QWidget):
         self.tick_divisions_z = 4
         self._metric_items = []
 
+        # ROI 오버레이 — list[(x,y,w,h)] 이미지 픽셀 좌표 (최대 3개)
+        self._roi_overlay: list[tuple] = []
+
     def ensure_gl_view(self):
         if GLViewWidget is None or GLScatterPlotItem is None:
             return False
@@ -1931,7 +2192,10 @@ class ScanViewer(QWidget):
                 [[xv, y0, z_plane], [xv, y0 + tick_len, z_plane]], dtype=float
             )
             it = GLLinePlotItem(pos=seg, mode="lines", antialias=True)
-            it.setGLOptions("translucent")
+            try:
+                it.setGLOptions("translucent")
+            except Exception:
+                pass
             self.gl_view.addItem(it)
             self._metric_items.append(it)
 
@@ -1948,7 +2212,10 @@ class ScanViewer(QWidget):
                 [[x0, yv, z_plane], [x0 + tick_len, yv, z_plane]], dtype=float
             )
             it = GLLinePlotItem(pos=seg, mode="lines", antialias=True)
-            it.setGLOptions("translucent")
+            try:
+                it.setGLOptions("translucent")
+            except Exception:
+                pass
             self.gl_view.addItem(it)
             self._metric_items.append(it)
 
@@ -1968,7 +2235,10 @@ class ScanViewer(QWidget):
         for zv in zs:
             seg = np.array([[x0, y0, zv], [x0 + tick_len, y0, zv]], dtype=float)
             it = GLLinePlotItem(pos=seg, mode="lines", antialias=True)
-            it.setGLOptions("translucent")
+            try:
+                it.setGLOptions("translucent")
+            except Exception:
+                pass
             self.gl_view.addItem(it)
             self._metric_items.append(it)
 
@@ -2226,6 +2496,17 @@ class ScanViewer(QWidget):
             self._tick_items.append(txt)
 
     def show_pointcloud(self, points: np.ndarray, colors: np.ndarray | None = None):
+        try:
+            self._show_pointcloud_impl(points, colors)
+        except Exception as e:
+            import traceback
+            self.label.setText(f"3D 뷰 렌더링 오류:\n{e}")
+            self.label.show()
+            if self.gl_view is not None:
+                self.gl_view.hide()
+            print(f"[ERROR] show_pointcloud: {e}\n{traceback.format_exc()}")
+
+    def _show_pointcloud_impl(self, points: np.ndarray, colors: np.ndarray | None = None):
         if not self.ensure_gl_view():
             self.label.setText(
                 "pyqtgraph / PyOpenGL 설치 필요: pip install pyqtgraph PyOpenGL"
@@ -2302,29 +2583,43 @@ class ScanViewer(QWidget):
         point_size = 2.0
 
         if self.gl_scatter is None:
+            # glOptions는 pyqtgraph 버전에 따라 생성자에서 지원 안 될 수 있음
+            # → 생성 후 별도로 setGLOptions 호출
             self.gl_scatter = GLScatterPlotItem(
                 pos=pts,
                 color=cols_rgba,
                 size=point_size,
                 pxMode=True,
-                glOptions="opaque",
             )
+            try:
+                self.gl_scatter.setGLOptions("opaque")
+            except Exception:
+                pass
             self.gl_view.addItem(self.gl_scatter)
         else:
             self.gl_scatter.setData(
                 pos=pts, color=cols_rgba, size=point_size, pxMode=True
             )
-            self.gl_scatter.setGLOptions("opaque")
+            try:
+                self.gl_scatter.setGLOptions("opaque")
+            except Exception:
+                pass
 
         if self.show_coords_overlay:
-            self._update_ticks_from_points(pts_rel)  # ✅ scatter pos와 같은 좌표를 넣기
+            try:
+                self._update_ticks_from_points(pts_rel)
+            except Exception:
+                pass
         else:
             self._clear_tick_items()
 
         if pg is not None:
-            self.gl_view.opts["center"] = pg.Vector(
-                float(center[0]), float(center[1]), float(center[2])
-            )
+            try:
+                self.gl_view.opts["center"] = pg.Vector(
+                    float(center[0]), float(center[1]), float(center[2])
+                )
+            except Exception:
+                pass
 
         self._apply_coords_visibility()
         self.gl_view.show()
@@ -2346,6 +2641,12 @@ class ScanViewer(QWidget):
 
         self._render_qimage()
 
+    def set_roi_overlay(self, rois: "list[tuple] | None"):
+        """ROI 사각형 목록을 이미지 위에 표시. rois = [(x,y,w,h), ...]"""
+        self._roi_overlay = list(rois) if rois else []
+        if self._current_qimg is not None:
+            self._render_qimage()
+
     def _render_qimage(self):
         if self._current_qimg is None:
             self.label.setPixmap(QPixmap())
@@ -2355,6 +2656,21 @@ class ScanViewer(QWidget):
             return
 
         pixmap = QPixmap.fromImage(self._current_qimg)
+
+        # ROI 사각형들을 원본 픽셀 좌표로 그린 뒤 축소 → 위치 정확
+        if self._roi_overlay:
+            p = QPainter(pixmap)
+            lw = max(2, pixmap.width() // 300)
+            for i, roi in enumerate(self._roi_overlay):
+                rc, gc, bc = _ROI_COLORS[i % len(_ROI_COLORS)]
+                rx, ry, rw, rh = int(roi[0]), int(roi[1]), int(roi[2]), int(roi[3])
+                p.setPen(QPen(QColor(rc, gc, bc), lw, Qt.DashLine))
+                p.setBrush(QBrush(QColor(rc, gc, bc, 35)))
+                p.drawRect(rx, ry, rw, rh)
+                p.setPen(QPen(QColor(rc, gc, bc)))
+                p.drawText(rx + 4, ry + 14, _ROI_LABELS[i % len(_ROI_LABELS)])
+            p.end()
+
         scaled = pixmap.scaled(
             self.label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation
         )
@@ -2448,6 +2764,13 @@ class MainWindow(QMainWindow):
         self.compare_depth_array: np.ndarray | None = None
         self.compare_color_qimage: QImage | None = None
 
+        # ROI: list[(x,y,w,h)] 최대 3개. 빈 리스트 = 전체 영역 비교
+        self.compare_rois: list[tuple] = []
+
+        # H×W×3 unmasked point grid — ROI 필터링에 사용
+        self.last_pointcloud_full: np.ndarray | None = None
+        self.compare_pointcloud_full: np.ndarray | None = None
+
         self.show_diff_overlay = False
         self.last_capture_dt: datetime | None = None
         self.last_capture_name: str | None = None
@@ -2492,8 +2815,8 @@ class MainWindow(QMainWindow):
         # -------------------------
         self.vkb = VirtualKeyboardManager(self)
         self.vkb.register(self.edit_tol_distance, "num")
+        self.vkb.register(self.edit_tol_area, "num")
         self.vkb.register(self.edit_gain_db, "num")
-        self.vkb.register(self.edit_tol_ratio, "num")
         self.vkb.register(self.edit_exposure_ms, "num")
 
         QTimer.singleShot(0, self._apply_fixed_layout_sizes)
@@ -2523,6 +2846,9 @@ class MainWindow(QMainWindow):
         self._central_sizes_applied = True
         QTimer.singleShot(0, self._force_central_equal)
         QTimer.singleShot(0, self._force_central_equal)  # ✅ 2번 걸어주면 더 안정적
+        # ★ OpenGL 컨텍스트를 이벤트 루프가 돌기 시작한 뒤 미리 초기화
+        # → 첫 스캔 시 GL surface 가 없어서 C++ 레벨에서 crash 나는 현상 방지
+        QTimer.singleShot(300, self._preinit_gl_views)
 
     def _force_central_equal(self):
         sp = getattr(self, "central_splitter", None)
@@ -2533,6 +2859,21 @@ class MainWindow(QMainWindow):
             return
         half = w // 2
         sp.setSizes([half, w - half])
+
+    def _preinit_gl_views(self):
+        """OpenGL 컨텍스트를 스캔 전에 미리 초기화하여 첫 렌더링 시 C++ crash 방지."""
+        if pg is None:
+            return
+        for viewer in (
+            getattr(self, "scan_viewer", None),
+            getattr(self, "compare_viewer", None),
+        ):
+            if viewer is None:
+                continue
+            try:
+                viewer.ensure_gl_view()
+            except Exception:
+                pass
 
     def _build_toolbar(self):
         tb = QToolBar("Main")
@@ -2601,6 +2942,10 @@ class MainWindow(QMainWindow):
 
         self.btn_reset_compare_data = QPushButton("Reset Compare")
         self.btn_reset_compare_data.clicked.connect(self.on_reset_compare_data_clicked)
+
+        self.btn_set_roi = QPushButton("Set ROI")
+        self.btn_set_roi.setToolTip("비교 모델별 검사 영역(ROI) 지정")
+        self.btn_set_roi.clicked.connect(self.on_set_roi_clicked)
 
         # --- Logs / Git ---
         self.btn_watch_today_log = QPushButton("Today Log")
@@ -2700,6 +3045,7 @@ class MainWindow(QMainWindow):
         left_header.addWidget(self.btn_define_compare, 0)
         left_header.addWidget(self.btn_save_compare_data, 0)
         left_header.addWidget(self.btn_load_compare_data, 0)
+        left_header.addWidget(self.btn_set_roi, 0)
         left_header.addWidget(self.btn_reset_compare_data, 0)
         left_layout.addLayout(left_header)
 
@@ -2788,20 +3134,19 @@ class MainWindow(QMainWindow):
         v.addWidget(gb_verdict)
 
         # ---- Tolerance ----
-        gb_tol = QGroupBox("허용 오차")
+        gb_tol = QGroupBox("오차허용범위")
         form = QFormLayout(gb_tol)
         form.setLabelAlignment(Qt.AlignLeft)
         form.setFormAlignment(Qt.AlignTop)
 
         self.edit_tol_distance = QLineEdit("10")
+        form.addRow("기준 오차거리 (mm)", self.edit_tol_distance)
 
-        form.addRow("오차 거리(mm)", self.edit_tol_distance)
+        # 허용 불량 면적 (mm²) — ROI 내 기준오차 초과 영역의 최대 허용 면적
+        self.edit_tol_area = QLineEdit("500")
+        form.addRow("허용 불량 면적 (mm²)", self.edit_tol_area)
 
-        # (추가) 오차 비율(%)
-        self.edit_tol_ratio = QLineEdit("2")
-        form.addRow("오차 비율(%)", self.edit_tol_ratio)
-
-        self.btn_apply_tol = QPushButton("Apply Tolerance")
+        self.btn_apply_tol = QPushButton("적용")
         self.btn_apply_tol.clicked.connect(self.on_apply_tolerance_clicked)
         form.addRow(self.btn_apply_tol)
 
@@ -3424,31 +3769,48 @@ class MainWindow(QMainWindow):
         self.last_capture_name = now_dt.strftime("%Y%m%d_%H%M%S")
         self.btn_save_files.setEnabled(True)
 
-        if self.btn_point.isChecked():
-            if self.last_pointcloud is None:
-                self.append_log("[ERROR] 포인트 데이터가 없습니다.")
-                return
+        # ★ 뷰 업데이트 전체를 try-except로 보호
+        # (OpenGL 렌더링/pyqtgraph 오류가 앱을 종료시키는 것 방지)
+        try:
+            if self.btn_point.isChecked():
+                if self.last_pointcloud is None:
+                    self.append_log("[WARN] 포인트 데이터가 없습니다.")
+                elif self.show_diff_overlay and self.compare_pointcloud is not None:
+                    self.update_recent_pointcloud_diff_view()
+                else:
+                    self.update_recent_pointcloud_view()
 
-            if self.show_diff_overlay and self.compare_pointcloud is not None:
-                self.update_recent_pointcloud_diff_view()
-            else:
-                self.update_recent_pointcloud_view()
+            elif self.btn_depth.isChecked():
+                if self.last_depth_qimage is None:
+                    self.append_log("[WARN] 뎁스 데이터가 없습니다.")
+                else:
+                    self.update_recent_depth_view()
 
-        elif self.btn_depth.isChecked():
-            if self.last_depth_qimage is None:
-                self.append_log("[ERROR] 뎁스 데이터가 없습니다.")
-                return
-            self.update_recent_depth_view()
+            elif self.btn_image.isChecked():
+                if self.last_color_qimage is None:
+                    self.append_log("[WARN] 2D 이미지가 없습니다.")
+                else:
+                    self.update_recent_image_view()
 
-        elif self.btn_image.isChecked():
-            if self.last_color_qimage is None:
-                self.append_log("[ERROR] 2D 이미지가 없습니다.")
-                return
-            self.update_recent_image_view()
+        except Exception as e:
+            import traceback
+            self.append_log(f"[ERROR] 화면 렌더링 실패: {e}")
+            self.append_log(f"[DEBUG] {traceback.format_exc()}")
 
-        self.update_tolerance_display()
-        self._handle_error_on_scan_if_needed()
-        self._sync_top_labels()
+        try:
+            self.update_tolerance_display()
+        except Exception as e:
+            self.append_log(f"[ERROR] 허용오차 표시 실패: {e}")
+
+        try:
+            self._handle_error_on_scan_if_needed()
+        except Exception as e:
+            self.append_log(f"[ERROR] 에러 로그 처리 실패: {e}")
+
+        try:
+            self._sync_top_labels()
+        except Exception:
+            pass
 
     # ===== 최근 스캔 데이터 파일로 저장 =====
     def on_save_files_clicked(self):
@@ -3518,42 +3880,44 @@ class MainWindow(QMainWindow):
                 pts = self.last_pointcloud
                 cols = self.last_colors
 
-                if o3d is not None:
-                    pcd = o3d.geometry.PointCloud()
-                    pcd.points = o3d.utility.Vector3dVector(pts)
-                    if cols is not None:
-                        cols_to_use = cols.astype(np.float32)
-                        if cols_to_use.max() > 1.0:
-                            cols_to_use = cols_to_use / 255.0
-                        pcd.colors = o3d.utility.Vector3dVector(cols_to_use)
-                    o3d.io.write_point_cloud(ply_path, pcd)
-                else:
-                    n = pts.shape[0]
-                    has_color = cols is not None and cols.shape[0] == n
+                # o3d.utility.Vector3dVector 이 Windows 에서 access violation 을 유발하므로
+                # 순수 numpy 바이너리 PLY 로 저장 (o3d 불필요, 더 빠름)
+                n = pts.shape[0]
+                xyz = pts.astype(np.float32)
 
-                    with open(ply_path, "w", encoding="utf-8") as f:
-                        f.write("ply\n")
-                        f.write("format ascii 1.0\n")
-                        f.write(f"element vertex {n}\n")
-                        f.write("property float x\n")
-                        f.write("property float y\n")
-                        f.write("property float z\n")
-                        if has_color:
-                            f.write("property uchar red\n")
-                            f.write("property uchar green\n")
-                            f.write("property uchar blue\n")
-                        f.write("end_header\n")
+                # 색상 유효 여부 확인 및 uint8 변환
+                cols_u8: np.ndarray | None = None
+                if cols is not None and cols.shape[0] == n:
+                    c_arr = cols.astype(np.float32)
+                    if c_arr.max() <= 1.0:
+                        c_arr = c_arr * 255.0
+                    cols_u8 = np.clip(c_arr, 0, 255).astype(np.uint8)
 
-                        for i in range(n):
-                            x, y, z = pts[i]
-                            if has_color:
-                                c = cols[i].astype(np.float32)
-                                if c.max() <= 1.0:
-                                    c = c * 255.0
-                                r, g, b = [int(np.clip(v, 0, 255)) for v in c]
-                                f.write(f"{x} {y} {z} {r} {g} {b}\n")
-                            else:
-                                f.write(f"{x} {y} {z}\n")
+                # 바이너리 PLY (little-endian)
+                with open(ply_path, "wb") as f:
+                    header = "ply\nformat binary_little_endian 1.0\n"
+                    header += f"element vertex {n}\n"
+                    header += "property float x\nproperty float y\nproperty float z\n"
+                    if cols_u8 is not None:
+                        header += "property uchar red\nproperty uchar green\nproperty uchar blue\n"
+                    header += "end_header\n"
+                    f.write(header.encode("ascii"))
+
+                    if cols_u8 is not None:
+                        # xyz (12 bytes) + rgb (3 bytes) = 15 bytes per vertex
+                        buf = np.zeros(n, dtype=[
+                            ("x", "<f4"), ("y", "<f4"), ("z", "<f4"),
+                            ("r", "u1"), ("g", "u1"), ("b", "u1"),
+                        ])
+                        buf["x"] = xyz[:, 0]
+                        buf["y"] = xyz[:, 1]
+                        buf["z"] = xyz[:, 2]
+                        buf["r"] = cols_u8[:, 0]
+                        buf["g"] = cols_u8[:, 1]
+                        buf["b"] = cols_u8[:, 2]
+                        f.write(buf.tobytes())
+                    else:
+                        f.write(xyz.tobytes())
 
                 self.append_log(f"PLY 저장 완료: {ply_path}")
             except Exception as e:
@@ -3564,6 +3928,36 @@ class MainWindow(QMainWindow):
         self.append_log(f"스캔 데이터 저장 완료: {save_dir}")
 
     # ===== 기존: 비교데이터 "정의" (last_* → compare_*) =====
+    # ===== ROI 지정 =====
+    def on_set_roi_clicked(self):
+        """비교 기준 이미지 위에서 ROI를 드래그로 지정."""
+        img = self.compare_color_qimage  # PNG 이미지 기준
+        if img is None:
+            img = self.compare_depth_qimage  # depth 컬러맵으로 대체
+        if img is None:
+            self.append_log("[WARN] ROI 지정 불가: 비교 데이터가 없습니다. "
+                            "먼저 Define Compare 또는 Load Compare를 수행하세요.")
+            return
+
+        dlg = ROISelectDialog(img, self.compare_rois or None, self)
+        if dlg.exec() != QDialog.Accepted:
+            return
+
+        self.compare_rois = dlg.selected_rois
+        self._update_roi_on_viewer()
+
+        if not self.compare_rois:
+            self.append_log("[INFO] ROI 초기화 — 전체 영역으로 비교합니다.")
+        else:
+            for i, (x, y, w, h) in enumerate(self.compare_rois):
+                self.append_log(f"[INFO] {_ROI_LABELS[i]}: x={x}, y={y}, 너비={w}px, 높이={h}px")
+
+    def _update_roi_on_viewer(self):
+        """compare_viewer의 현재 이미지에 ROI 사각형 오버레이를 반영."""
+        self.compare_viewer.set_roi_overlay(self.compare_rois)
+        if self.compare_viewer._current_qimg is not None:
+            self.compare_viewer._render_qimage()
+
     def on_define_compare_clicked(self):
         if (
             self.last_pointcloud is None
@@ -3578,6 +3972,10 @@ class MainWindow(QMainWindow):
         )
         self.compare_colors = (
             None if self.last_colors is None else self.last_colors.copy()
+        )
+        self.compare_pointcloud_full = (
+            None if self.last_pointcloud_full is None
+            else self.last_pointcloud_full.copy()
         )
 
         self.compare_depth_array = (
@@ -3671,9 +4069,14 @@ class MainWindow(QMainWindow):
             self.update_tolerance_display()
 
         except Exception as e:
+            import traceback
             self.append_log(f"[ERROR] 비교 데이터 불러오기 실패: {e}")
+            self.append_log(f"[DEBUG] {traceback.format_exc()}")
 
-        self._sync_top_labels()
+        try:
+            self._sync_top_labels()
+        except Exception:
+            pass
 
     def save_compare_bundle(self, folder_name: str):
         """comparedata\\folder_name\\folder_name.(png/tiff/ply)로 저장."""
@@ -3691,11 +4094,12 @@ class MainWindow(QMainWindow):
         meta_path = os.path.join(save_dir, "meta.json")
         meta = {
             "tol_distance_mm": float(self.get_threshold_mm()),
-            "tol_ratio_percent": float(self.get_allow_ratio() * 100.0),
+            "tol_area_mm2": float(self.get_allow_area_mm2()),
             "gain_db": float(self._get_gain_db()),
             "exposure_ms": float(self._get_exposure_ms()),
             "saved_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "bundle_name": base,
+            "rois": [list(r) for r in self.compare_rois] if self.compare_rois else [],
         }
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(meta, f, ensure_ascii=False, indent=2)
@@ -3738,43 +4142,45 @@ class MainWindow(QMainWindow):
             pts = self.compare_pointcloud
             cols = self.compare_colors
 
-            if o3d is not None:
-                pcd = o3d.geometry.PointCloud()
-                pcd.points = o3d.utility.Vector3dVector(pts)
-                if cols is not None:
-                    cols_to_use = cols.astype(np.float32)
-                    if cols_to_use.max() > 1.0:
-                        cols_to_use = cols_to_use / 255.0
-                    pcd.colors = o3d.utility.Vector3dVector(cols_to_use)
-                o3d.io.write_point_cloud(ply_path, pcd)
-            else:
-                n = pts.shape[0]
-                has_color = cols is not None and cols.shape[0] == n
-                with open(ply_path, "w", encoding="utf-8") as f:
-                    f.write("ply\n")
-                    f.write("format ascii 1.0\n")
-                    f.write(f"element vertex {n}\n")
-                    f.write("property float x\n")
-                    f.write("property float y\n")
-                    f.write("property float z\n")
-                    if has_color:
-                        f.write("property uchar red\n")
-                        f.write("property uchar green\n")
-                        f.write("property uchar blue\n")
-                    f.write("end_header\n")
-                    for i in range(n):
-                        x, y, z = pts[i]
-                        if has_color:
-                            c = cols[i].astype(np.float32)
-                            if c.max() <= 1.0:
-                                c = c * 255.0
-                            r, g, b = [int(np.clip(v, 0, 255)) for v in c]
-                            f.write(f"{x} {y} {z} {r} {g} {b}\n")
-                        else:
-                            f.write(f"{x} {y} {z}\n")
+            # o3d Vector3dVector → Windows access violation 유발, numpy 바이너리 PLY로 대체
+            n = pts.shape[0]
+            xyz = pts.astype(np.float32)
+            cols_u8: np.ndarray | None = None
+            if cols is not None and cols.shape[0] == n:
+                c_arr = cols.astype(np.float32)
+                if c_arr.max() <= 1.0:
+                    c_arr = c_arr * 255.0
+                cols_u8 = np.clip(c_arr, 0, 255).astype(np.uint8)
+            with open(ply_path, "wb") as f:
+                header = "ply\nformat binary_little_endian 1.0\n"
+                header += f"element vertex {n}\n"
+                header += "property float x\nproperty float y\nproperty float z\n"
+                if cols_u8 is not None:
+                    header += "property uchar red\nproperty uchar green\nproperty uchar blue\n"
+                header += "end_header\n"
+                f.write(header.encode("ascii"))
+                if cols_u8 is not None:
+                    buf = np.zeros(n, dtype=[
+                        ("x", "<f4"), ("y", "<f4"), ("z", "<f4"),
+                        ("r", "u1"), ("g", "u1"), ("b", "u1"),
+                    ])
+                    buf["x"] = xyz[:, 0]; buf["y"] = xyz[:, 1]; buf["z"] = xyz[:, 2]
+                    buf["r"] = cols_u8[:, 0]; buf["g"] = cols_u8[:, 1]; buf["b"] = cols_u8[:, 2]
+                    f.write(buf.tobytes())
+                else:
+                    f.write(xyz.tobytes())
             self.append_log(f"[COMPARE] PLY 저장: {ply_path}")
         else:
             self.append_log("[COMPARE] PLY 저장 생략: pointcloud 없음")
+
+        # Grid (H×W×3) — ROI 포인트 필터링용. 없어도 무방
+        if self.compare_pointcloud_full is not None:
+            grid_path = os.path.join(save_dir, f"{base}_grid.npy")
+            try:
+                np.save(grid_path, self.compare_pointcloud_full.astype(np.float32))
+                self.append_log(f"[COMPARE] Grid 저장: {grid_path}")
+            except Exception as e:
+                self.append_log(f"[WARN] Grid 저장 실패: {e}")
 
     def load_compare_bundle(self, folder_name: str):
         """comparedata\\folder_name\\folder_name.(png/tiff/ply)에서 로드."""
@@ -3792,89 +4198,101 @@ class MainWindow(QMainWindow):
         # PNG → compare_color_qimage
         self.compare_color_qimage = None
         if os.path.isfile(png_path):
-            qimg = None
-            if Image is not None:
-                try:
-                    img = Image.open(png_path).convert("RGB")
-                    arr = np.array(img)
-                    h, w, _ = arr.shape
-                    qimg = QImage(arr.data, w, h, 3 * w, QImage.Format_RGB888).copy()
-                except Exception:
-                    qimg = None
-            if qimg is None and cv2 is not None:
-                img = cv2.imread(png_path, cv2.IMREAD_COLOR)
-                if img is not None:
-                    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                    h, w, _ = img.shape
-                    qimg = QImage(img.data, w, h, 3 * w, QImage.Format_RGB888).copy()
-            self.compare_color_qimage = qimg
+            try:
+                qimg = None
+                if Image is not None:
+                    try:
+                        img = Image.open(png_path).convert("RGB")
+                        arr = np.array(img)
+                        h, w, _ = arr.shape
+                        qimg = QImage(arr.data, w, h, 3 * w, QImage.Format_RGB888).copy()
+                    except Exception:
+                        qimg = None
+                if qimg is None and cv2 is not None:
+                    img = cv2.imread(png_path, cv2.IMREAD_COLOR)
+                    if img is not None:
+                        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                        h, w, _ = img.shape
+                        qimg = QImage(img.data, w, h, 3 * w, QImage.Format_RGB888).copy()
+                self.compare_color_qimage = qimg
+                self.append_log(f"[COMPARE] PNG 로드: {png_path}")
+            except Exception as e:
+                self.append_log(f"[WARN] PNG 로드 실패: {e}")
 
         # TIFF → compare_depth_array / compare_depth_qimage(컬러맵)
         self.compare_depth_array = None
         self.compare_depth_qimage = None
         if os.path.isfile(tiff_path):
-            depth_np = None
-            if cv2 is not None:
-                d = cv2.imread(tiff_path, cv2.IMREAD_UNCHANGED)
-                if d is not None:
-                    depth_np = d.astype(np.float32)
-            if depth_np is None and Image is not None:
-                img = Image.open(tiff_path)
-                depth_np = np.array(img).astype(np.float32)
+            try:
+                depth_np = None
+                if cv2 is not None:
+                    d = cv2.imread(tiff_path, cv2.IMREAD_UNCHANGED)
+                    if d is not None:
+                        depth_np = d.astype(np.float32)
+                if depth_np is None and Image is not None:
+                    img = Image.open(tiff_path)
+                    depth_np = np.array(img).astype(np.float32)
 
-            if depth_np is not None:
-                self.compare_depth_array = depth_np
-                rgb_uint8 = depth_to_color_image(depth_np)
-                rgb_uint8 = np.ascontiguousarray(rgb_uint8)
-                h, w, _ = rgb_uint8.shape
-                self.compare_depth_qimage = QImage(
-                    rgb_uint8.data, w, h, 3 * w, QImage.Format_RGB888
-                ).copy()
+                if depth_np is not None:
+                    self.compare_depth_array = depth_np
+                    rgb_uint8 = depth_to_color_image(depth_np)
+                    rgb_uint8 = np.ascontiguousarray(rgb_uint8)
+                    h, w, _ = rgb_uint8.shape
+                    self.compare_depth_qimage = QImage(
+                        rgb_uint8.data, w, h, 3 * w, QImage.Format_RGB888
+                    ).copy()
+                    self.append_log(f"[COMPARE] TIFF 로드: {tiff_path}")
+            except Exception as e:
+                self.append_log(f"[WARN] TIFF 로드 실패: {e}")
 
         # PLY → compare_pointcloud / compare_colors
         self.compare_pointcloud = None
         self.compare_colors = None
         if os.path.isfile(ply_path):
-            if o3d is not None:
-                pcd = o3d.io.read_point_cloud(ply_path)
-                pts = np.asarray(pcd.points)
-                if pts.ndim == 2 and pts.shape[1] == 3:
-                    mask = np.isfinite(pts).all(axis=1)
-                    pts = pts[mask]
-                    self.compare_pointcloud = pts.astype(np.float32)
-                    if pcd.has_colors():
-                        cols = np.asarray(pcd.colors)
-                        cols = cols[mask]
-                        self.compare_colors = cols.astype(np.float32)
-                    else:
-                        self.compare_colors = None
-            else:
-                # open3d 없으면 최소: point만 읽는 간단 파서(ASCII PLY)
-                pts = []
-                cols = []
-                with open(ply_path, "r", encoding="utf-8", errors="ignore") as f:
-                    header = True
-                    has_color = False
-                    for line in f:
-                        line = line.strip()
-                        if header:
-                            if line.startswith("property uchar red"):
-                                has_color = True
-                            if line == "end_header":
-                                header = False
-                            continue
-                        parts = line.split()
-                        if len(parts) >= 3:
-                            x, y, z = map(float, parts[:3])
-                            pts.append([x, y, z])
-                            if has_color and len(parts) >= 6:
-                                r, g, b = map(int, parts[3:6])
-                                cols.append([r / 255.0, g / 255.0, b / 255.0])
-                if pts:
-                    self.compare_pointcloud = np.array(pts, dtype=np.float32)
-                    self.compare_colors = (
-                        np.array(cols, dtype=np.float32) if cols else None
-                    )
+            try:
+                if o3d is not None:
+                    pcd = o3d.io.read_point_cloud(ply_path)
+                    pts = np.asarray(pcd.points)
+                    if pts.ndim == 2 and pts.shape[1] == 3:
+                        mask = np.isfinite(pts).all(axis=1)
+                        pts = pts[mask]
+                        self.compare_pointcloud = pts.astype(np.float32)
+                        if pcd.has_colors():
+                            cols = np.asarray(pcd.colors)
+                            cols = cols[mask]
+                            self.compare_colors = cols.astype(np.float32)
+                        else:
+                            self.compare_colors = None
+                else:
+                    # open3d 없으면 최소: point만 읽는 간단 파서(ASCII PLY)
+                    pts = []
+                    cols = []
+                    with open(ply_path, "r", encoding="utf-8", errors="ignore") as f:
+                        header = True
+                        has_color = False
+                        for line in f:
+                            line = line.strip()
+                            if header:
+                                if line.startswith("property uchar red"):
+                                    has_color = True
+                                if line == "end_header":
+                                    header = False
+                                continue
+                            parts = line.split()
+                            if len(parts) >= 3:
+                                x, y, z = map(float, parts[:3])
+                                pts.append([x, y, z])
+                                if has_color and len(parts) >= 6:
+                                    r, g, b = map(int, parts[3:6])
+                                    cols.append([r / 255.0, g / 255.0, b / 255.0])
+                    if pts:
+                        self.compare_pointcloud = np.array(pts, dtype=np.float32)
+                        self.compare_colors = (
+                            np.array(cols, dtype=np.float32) if cols else None
+                        )
+                self.append_log(f"[COMPARE] PLY 로드: {ply_path}")
+            except Exception as e:
+                self.append_log(f"[WARN] PLY 로드 실패: {e}")
 
         # --- NEW: 허용오차 설정 불러오기(meta.json) ---
         if os.path.isfile(meta_path):
@@ -3883,14 +4301,15 @@ class MainWindow(QMainWindow):
                     meta = json.load(f)
 
                 dist_mm = meta.get("tol_distance_mm", None)
-                ratio_pct = meta.get("tol_ratio_percent", None)
+                area_mm2 = meta.get("tol_area_mm2", None)
+                # 구버전 tol_ratio_percent 하위 호환: 비율→면적 변환 없이 그냥 무시
                 gain_db = meta.get("gain_db", None)
                 exposure_ms = meta.get("exposure_ms", None)
 
                 if dist_mm is not None:
                     self.edit_tol_distance.setText(str(dist_mm))
-                if ratio_pct is not None:
-                    self.edit_tol_ratio.setText(str(ratio_pct))
+                if area_mm2 is not None:
+                    self.edit_tol_area.setText(str(area_mm2))
 
                 # ✅ 게인/노출 입력칸 자동 기입
                 if gain_db is not None:
@@ -3908,13 +4327,44 @@ class MainWindow(QMainWindow):
                 # ✅ 카메라 파라미터 Apply 자동 실행 (실카메라면 적용, 샘플모드면 스킵 로그)
                 self.on_apply_camera_params_clicked()
 
+                # ROI 로드 (새 형식 rois 우선, 구버전 roi 폴백)
+                rois_raw = meta.get("rois", None)
+                if rois_raw:
+                    self.compare_rois = [
+                        tuple(int(v) for v in r) for r in rois_raw if len(r) == 4
+                    ]
+                else:
+                    # 구버전 단일 roi 하위 호환
+                    roi_raw = meta.get("roi", None)
+                    if roi_raw and len(roi_raw) == 4:
+                        self.compare_rois = [tuple(int(v) for v in roi_raw)]
+                    else:
+                        self.compare_rois = []
+                if self.compare_rois:
+                    self.append_log(f"[COMPARE] ROI {len(self.compare_rois)}개 로드")
+
             except Exception as e:
                 self.append_log(f"[WARN] meta.json 로드 실패: {e}")
 
-            self.current_compare_name = folder_name  # 저장된 비교데이터 이름 = 폴더명
+            self.current_compare_name = folder_name
 
         else:
             self.append_log("[INFO] meta.json 없음(현재 설정 유지)")
+            self.current_compare_name = folder_name
+            self.compare_rois = []
+
+        # Grid (H×W×3) — ROI 포인트 필터링용
+        self.compare_pointcloud_full = None
+        grid_path = os.path.join(load_dir, f"{folder_name}_grid.npy")
+        if os.path.isfile(grid_path):
+            try:
+                self.compare_pointcloud_full = np.load(grid_path).astype(np.float32)
+                self.append_log(f"[COMPARE] Grid 로드: {grid_path}")
+            except Exception as e:
+                self.append_log(f"[WARN] Grid 로드 실패: {e}")
+
+        # ROI 오버레이 뷰어에 반영
+        self._update_roi_on_viewer()
 
     def on_reset_compare_data_clicked(self):
         # 정의된 비교 데이터(좌측)를 완전히 비움
@@ -3924,6 +4374,9 @@ class MainWindow(QMainWindow):
         self.compare_depth_array = None
         self.compare_color_qimage = None
         self.current_compare_name = None
+        self.compare_rois = []
+        self.compare_pointcloud_full = None
+        self.compare_viewer.set_roi_overlay([])
 
         self.append_log("[INFO] 비교 데이터(Define Compare Data)가 리셋되었습니다.")
 
@@ -3967,8 +4420,17 @@ class MainWindow(QMainWindow):
         '최근 데이터' 변수들(last_*)에 저장.
         """
         if USE_REAL_CAMERA:
+            if self.camera is None:
+                raise RuntimeError("카메라 객체가 초기화되지 않았습니다.")
             frame2d_and_3d = Frame2DAnd3D()
-            show_error(self.camera.capture_2d_and_3d_with_normal(frame2d_and_3d))
+
+            # ★ 핵심: 캡쳐 에러 상태를 반드시 확인 후 진행
+            # show_error는 출력만 할 뿐 실행을 멈추지 않음 → 실패 시 frame 데이터가
+            # 유효하지 않아 이후 C++ 접근에서 segfault 발생 → 프로세스 강제 종료
+            capture_status = self.camera.capture_2d_and_3d_with_normal(frame2d_and_3d)
+            if not capture_status.is_ok():
+                show_error(capture_status)
+                raise RuntimeError(f"카메라 캡쳐 실패: {capture_status}")
 
             # --- 2D 컬러 이미지 ---
             try:
@@ -3992,51 +4454,66 @@ class MainWindow(QMainWindow):
                     self.last_color_qimage = None
             except Exception as e:
                 self.last_color_qimage = None
-                self.append_log(f"[ERROR] 2D 컬러 이미지 변환 실패: {e}")
+                self.append_log(f"[WARN] 2D 컬러 이미지 변환 실패: {e}")
 
             # --- Depth & Point ---
-            frame_3d = frame2d_and_3d.frame_3d()
+            try:
+                frame_3d = frame2d_and_3d.frame_3d()
 
-            depth_map = frame_3d.get_depth_map()
-            depth_np = depth_map.data().copy().astype(np.float32)
-            self.last_depth_array = depth_np
+                depth_map = frame_3d.get_depth_map()
+                depth_np = depth_map.data().copy().astype(np.float32)
+                self.last_depth_array = depth_np
 
-            rgb_uint8 = depth_to_color_image(depth_np)
+                rgb_uint8 = depth_to_color_image(depth_np)
 
-            mask_valid = np.isfinite(depth_np) & (depth_np > 0)
-            if np.any(mask_valid):
-                ys, xs = np.where(mask_valid)
-                y0, y1 = ys.min(), ys.max() + 1
-                x0, x1 = xs.min(), xs.max() + 1
+                mask_valid = np.isfinite(depth_np) & (depth_np > 0)
+                if np.any(mask_valid):
+                    ys, xs = np.where(mask_valid)
+                    y0, y1 = ys.min(), ys.max() + 1
+                    x0, x1 = xs.min(), xs.max() + 1
 
-                pad_y = int(0.05 * depth_np.shape[0])
-                pad_x = int(0.05 * depth_np.shape[1])
+                    pad_y = int(0.05 * depth_np.shape[0])
+                    pad_x = int(0.05 * depth_np.shape[1])
 
-                y0 = max(0, y0 - pad_y)
-                y1 = min(depth_np.shape[0], y1 + pad_y)
-                x0 = max(0, x0 - pad_x)
-                x1 = min(depth_np.shape[1], x1 + pad_x)
+                    y0 = max(0, y0 - pad_y)
+                    y1 = min(depth_np.shape[0], y1 + pad_y)
+                    x0 = max(0, x0 - pad_x)
+                    x1 = min(depth_np.shape[1], x1 + pad_x)
 
-                rgb_uint8 = rgb_uint8[y0:y1, x0:x1]
+                    rgb_uint8 = rgb_uint8[y0:y1, x0:x1]
 
-            rgb_uint8 = np.ascontiguousarray(rgb_uint8)
-            h, w, _ = rgb_uint8.shape
-            qimg = QImage(rgb_uint8.data, w, h, 3 * w, QImage.Format_RGB888).copy()
-            self.last_depth_qimage = qimg
+                rgb_uint8 = np.ascontiguousarray(rgb_uint8)
+                h, w, _ = rgb_uint8.shape
+                qimg = QImage(rgb_uint8.data, w, h, 3 * w, QImage.Format_RGB888).copy()
+                self.last_depth_qimage = qimg
+            except Exception as e:
+                self.last_depth_array = None
+                self.last_depth_qimage = None
+                self.append_log(f"[WARN] Depth 데이터 처리 실패: {e}")
 
-            pc = frame_3d.get_untextured_point_cloud()
-            pc_np = pc.data().copy()
+            try:
+                frame_3d = frame2d_and_3d.frame_3d()
+                pc = frame_3d.get_untextured_point_cloud()
+                pc_np = pc.data().copy()
 
-            pts = pc_np
-            if pts.ndim == 3:
-                pts = pts.reshape(-1, 3)
+                pts = pc_np
+                if pts.ndim == 3:
+                    # H×W×3 그리드 보존 — ROI 포인트 필터링에 사용
+                    self.last_pointcloud_full = pts.astype(np.float32)
+                    pts = pts.reshape(-1, 3)
+                else:
+                    self.last_pointcloud_full = None
 
-            mask = np.isfinite(pts).all(axis=1)
-            mask &= pts[:, 2] > 0
-            pts = pts[mask]
+                mask = np.isfinite(pts).all(axis=1)
+                mask &= pts[:, 2] > 0
+                pts = pts[mask]
 
-            self.last_pointcloud = pts
-            self.last_colors = None
+                self.last_pointcloud = pts
+                self.last_colors = None
+            except Exception as e:
+                self.last_pointcloud = None
+                self.last_colors = None
+                self.append_log(f"[WARN] Point Cloud 처리 실패: {e}")
 
         else:
             # === 샘플 파일 모드 ===
@@ -4125,22 +4602,25 @@ class MainWindow(QMainWindow):
         pts_vis = pts
         cols_vis = cols
 
-        if o3d is not None:
-            pcd = o3d.geometry.PointCloud()
-            pcd.points = o3d.utility.Vector3dVector(pts)
-            if cols is not None:
-                pcd.colors = o3d.utility.Vector3dVector(cols)
-
-            center = pcd.get_center()
-            pcd.translate(-center)
-            base_R = o3d.geometry.get_rotation_matrix_from_xyz((np.pi, 0, 0))
-            pcd.rotate(base_R, center=(0, 0, 0))
-
-            pts_vis = np.asarray(pcd.points)
-            if pcd.has_colors():
-                cols_vis = np.asarray(pcd.colors)
+        # Open3D C++ crash 방지: o3d 대신 순수 numpy로 동일한 변환 수행
+        # 변환: 1) 중심 이동 (center subtract)  2) X축 180° 회전 (y, z 부호 반전)
+        try:
+            p = pts.astype(np.float64, copy=True)
+            finite_mask = np.all(np.isfinite(p), axis=1)
+            if np.any(finite_mask):
+                center = p[finite_mask].mean(axis=0)
             else:
-                cols_vis = None
+                center = np.zeros(3, dtype=np.float64)
+            p -= center
+            # get_rotation_matrix_from_xyz((π, 0, 0)) → [[1,0,0],[0,-1,0],[0,0,-1]]
+            p[:, 1] *= -1
+            p[:, 2] *= -1
+            pts_vis = p
+            cols_vis = cols  # 색상 배열은 변환 없이 그대로 사용
+        except Exception as e:
+            self.append_log(f"[WARN] 포인트 클라우드 변환 실패 (원본 사용): {e}")
+            pts_vis = pts
+            cols_vis = cols
 
         if cols_vis is None and pts_vis is not None and pts_vis.size > 0:
             z = pts_vis[:, 2].astype(np.float32)
@@ -4277,86 +4757,105 @@ class MainWindow(QMainWindow):
         # 반환 diff_ratio 자리에 blob 기반 cluster_ratio를 넣는다
         return mean_cm, max_cm, overall_ratio, threshold_mm
 
+    def _pts_from_grid_rois(self, grid: "np.ndarray | None", rois: "list[tuple]"):
+        """여러 ROI의 포인트를 합쳐서 반환. rois 빈 리스트면 None 반환."""
+        if grid is None or not rois:
+            return None
+        parts = [self._pts_from_grid_roi(grid, r) for r in rois]
+        parts = [p for p in parts if p is not None and len(p) > 0]
+        return np.vstack(parts) if parts else None
+
+    def _pts_from_grid_roi(self, grid: "np.ndarray | None", roi: "tuple | None"):
+        """H×W×3 그리드에서 ROI 영역 포인트만 추출. grid/roi 없으면 None 반환."""
+        if grid is None or roi is None:
+            return None
+        rx, ry, rw, rh = roi
+        H, W = grid.shape[:2]
+        ry1, ry2 = max(0, ry), min(ry + rh, H)
+        rx1, rx2 = max(0, rx), min(rx + rw, W)
+        if ry2 <= ry1 or rx2 <= rx1:
+            return None
+        sub = grid[ry1:ry2, rx1:rx2].reshape(-1, 3).astype(np.float32)
+        mask = np.isfinite(sub).all(axis=1) & (sub[:, 2] > 0)
+        pts = sub[mask]
+        return pts if len(pts) > 0 else None
+
     def compute_pointcloud_diff_stats(
         self, ref_pts: np.ndarray | None, cur_pts: np.ndarray | None
     ):
-        if o3d is None:
-            self.append_log("[WARN] open3d 미설치 - 포인트 클라우드 비교를 건너뜁니다.")
-            return None
-
+        # open3d(Vector3dVector, ICP 등)는 Windows에서 access violation 유발 →
+        # scipy.spatial.KDTree 기반 순수 numpy 구현으로 대체
         if ref_pts is None or cur_pts is None:
             return None
+
+        # ROI가 설정되어 있고 그리드가 있으면 ROI 영역 포인트로 교체
+        if self.compare_rois:
+            ref_roi = self._pts_from_grid_rois(self.compare_pointcloud_full, self.compare_rois)
+            cur_roi = self._pts_from_grid_rois(self.last_pointcloud_full, self.compare_rois)
+            if ref_roi is not None:
+                ref_pts = ref_roi
+                self.append_log(f"[DEBUG] 포인트 ROI 적용(ref): {len(ref_pts):,}점")
+            if cur_roi is not None:
+                cur_pts = cur_roi
+                self.append_log(f"[DEBUG] 포인트 ROI 적용(cur): {len(cur_pts):,}점")
 
         ref = np.asarray(ref_pts, dtype=np.float32)
         cur = np.asarray(cur_pts, dtype=np.float32)
         if ref.size == 0 or cur.size == 0:
             return None
 
-        pcd_ref = o3d.geometry.PointCloud()
-        pcd_ref.points = o3d.utility.Vector3dVector(ref)
-
-        pcd_cur = o3d.geometry.PointCloud()
-        pcd_cur.points = o3d.utility.Vector3dVector(cur)
-
-        voxel_size = 2.0
-        if voxel_size > 0:
-            pcd_ref = pcd_ref.voxel_down_sample(voxel_size)
-            pcd_cur = pcd_cur.voxel_down_sample(voxel_size)
-
-        if len(pcd_ref.points) == 0 or len(pcd_cur.points) == 0:
+        # 유효 포인트(finite)만 사용
+        ref = ref[np.all(np.isfinite(ref), axis=1)]
+        cur = cur[np.all(np.isfinite(cur), axis=1)]
+        if len(ref) == 0 or len(cur) == 0:
             return None
 
-        # --- ICP 정합 ---
-        align_dist_mm = 30.0
-        reg = o3d.pipelines.registration.registration_icp(
-            pcd_cur,
-            pcd_ref,
-            align_dist_mm,
-            np.eye(4),
-            o3d.pipelines.registration.TransformationEstimationPointToPoint(),
-        )
-        T = reg.transformation
+        # 성능을 위해 최대 50,000 포인트로 랜덤 서브샘플링 (voxel downsampling 대체)
+        MAX_PTS = 50_000
+        rng = np.random.default_rng(0)
+        if len(ref) > MAX_PTS:
+            ref = ref[rng.choice(len(ref), MAX_PTS, replace=False)]
+        if len(cur) > MAX_PTS:
+            cur = cur[rng.choice(len(cur), MAX_PTS, replace=False)]
 
-        self.append_log(
-            "[DEBUG] ICP 정합: fitness={:.3f}, rmse={:.3f}, 이동={:.2f}mm".format(
-                reg.fitness, reg.inlier_rmse, np.linalg.norm(T[:3, 3])
-            )
-        )
-
-        pcd_cur_aligned = o3d.geometry.PointCloud(pcd_cur)  # 복사
-        pcd_cur_aligned.transform(T)
-
-        # --- 거리 계산(양방향) ---
-        d_cur_to_ref = np.asarray(
-            pcd_cur_aligned.compute_point_cloud_distance(pcd_ref), dtype=np.float32
-        )
-        d_ref_to_cur = np.asarray(
-            pcd_ref.compute_point_cloud_distance(pcd_cur_aligned), dtype=np.float32
-        )
-
-        if d_cur_to_ref.size == 0 or d_ref_to_cur.size == 0:
+        try:
+            from scipy.spatial import KDTree  # type: ignore
+        except ImportError:
+            self.append_log("[WARN] scipy 미설치 - 포인트 클라우드 비교를 건너뜁니다.")
             return None
 
-        dists = np.concatenate([d_cur_to_ref, d_ref_to_cur]).astype(np.float32)
+        # KDTree 기반 최근접 거리 계산 (양방향)
+        tree_ref = KDTree(ref)
+        tree_cur = KDTree(cur)
+
+        d_cur_to_ref, _ = tree_ref.query(cur, workers=-1)
+        d_ref_to_cur, _ = tree_cur.query(ref, workers=-1)
+
+        dists = np.concatenate([
+            d_cur_to_ref.astype(np.float32),
+            d_ref_to_cur.astype(np.float32),
+        ])
 
         threshold_mm = float(self.get_threshold_mm())
-        min_mm = float(dists.min())
+        min_mm  = float(dists.min())
         mean_mm = float(dists.mean())
-        max_mm = float(dists.max())
+        max_mm  = float(dists.max())
 
-        # (참고용) 기존 방식의 전체 outlier 비율
         overall_ratio = float(np.mean(dists >= threshold_mm))
 
-        # 로그/엑셀용으로 저장해두면 _compute_judgement_stats에서 재활용 가능
-        self._last_point_min_mm = min_mm
-        self._last_point_mean_mm = mean_mm
-        self._last_point_max_mm = max_mm
+        self._last_point_min_mm      = min_mm
+        self._last_point_mean_mm     = mean_mm
+        self._last_point_max_mm      = max_mm
         self._last_point_overall_ratio = overall_ratio
 
-        mean_cm = mean_mm / 10.0
-        max_cm = max_mm / 10.0
+        self.append_log(
+            f"[DEBUG] 포인트 거리 통계: min={min_mm:.2f} mm, "
+            f"mean={mean_mm:.2f} mm, max={max_mm:.2f} mm, "
+            f"outlier={overall_ratio*100:.1f}%"
+        )
 
-        # 반환의 diff_ratio 자리에 cluster_ratio를 넣는다 (기존 UI/판정 로직 그대로 재사용)
+        mean_cm = mean_mm / 10.0
+        max_cm  = max_mm  / 10.0
         return mean_cm, max_cm, overall_ratio, threshold_mm
 
     def make_diff_depth_qimage(self) -> QImage | None:
@@ -4371,8 +4870,26 @@ class MainWindow(QMainWindow):
         d_ref = d_ref[:h, :w]
         d_cur = d_cur[:h, :w]
 
+        # ROI 적용: 여러 ROI의 합집합 마스크로 해당 영역만 비교
+        roi_mask: "np.ndarray | None" = None
+        if self.compare_rois:
+            roi_mask = np.zeros((h, w), dtype=bool)
+            for rx, ry, rw_r, rh_r in self.compare_rois:
+                rx1, ry1 = max(0, rx), max(0, ry)
+                rx2, ry2 = min(rx + rw_r, w), min(ry + rh_r, h)
+                if rx2 > rx1 and ry2 > ry1:
+                    roi_mask[ry1:ry2, rx1:rx2] = True
+            if not np.any(roi_mask):
+                self.append_log("[WARN] 모든 ROI가 유효 범위를 벗어남 — 전체 비교로 대체합니다.")
+                roi_mask = None
+
         valid_ref = np.isfinite(d_ref) & (d_ref > 0)
         valid_cur = np.isfinite(d_cur) & (d_cur > 0)
+
+        # ROI 마스크 적용
+        if roi_mask is not None:
+            valid_ref = valid_ref & roi_mask
+            valid_cur = valid_cur & roi_mask
 
         valid_any = valid_ref | valid_cur
         if not np.any(valid_any):
@@ -4439,83 +4956,63 @@ class MainWindow(QMainWindow):
         return qimg
 
     def make_pointcloud_diff_for_view(self):
-        if o3d is None:
-            self.append_log("[WARN] open3d 미설치 - 포인트 diff 뷰를 만들 수 없습니다.")
-            return None
-
+        """포인트 클라우드 diff 색상 뷰 생성 (o3d 불필요 — scipy KDTree 기반)."""
         if self.compare_pointcloud is None or self.last_pointcloud is None:
             return None
 
-        ref = np.asarray(self.compare_pointcloud, dtype=np.float32)
-        cur = np.asarray(self.last_pointcloud, dtype=np.float32)
+        # ROI가 있으면 그리드에서 해당 영역만 추출 (다중 ROI 합집합)
+        ref_roi = self._pts_from_grid_rois(self.compare_pointcloud_full, self.compare_rois)
+        cur_roi = self._pts_from_grid_rois(self.last_pointcloud_full, self.compare_rois)
+        ref = ref_roi if ref_roi is not None else np.asarray(self.compare_pointcloud, dtype=np.float32)
+        cur = cur_roi if cur_roi is not None else np.asarray(self.last_pointcloud, dtype=np.float32)
+
         if ref.size == 0 or cur.size == 0:
             return None
 
-        pcd_ref = o3d.geometry.PointCloud()
-        pcd_ref.points = o3d.utility.Vector3dVector(ref)
-
-        pcd_cur = o3d.geometry.PointCloud()
-        pcd_cur.points = o3d.utility.Vector3dVector(cur)
-
-        voxel_size = 2.0
-        if voxel_size > 0:
-            pcd_ref = pcd_ref.voxel_down_sample(voxel_size)
-            pcd_cur = pcd_cur.voxel_down_sample(voxel_size)
-
-        if len(pcd_ref.points) == 0 or len(pcd_cur.points) == 0:
+        ref = ref[np.all(np.isfinite(ref), axis=1)]
+        cur = cur[np.all(np.isfinite(cur), axis=1)]
+        if len(ref) == 0 or len(cur) == 0:
             return None
 
-        align_dist_mm = 30.0
-        reg = o3d.pipelines.registration.registration_icp(
-            pcd_cur,
-            pcd_ref,
-            align_dist_mm,
-            np.eye(4),
-            o3d.pipelines.registration.TransformationEstimationPointToPoint(),
-        )
+        # 성능을 위해 서브샘플링
+        MAX_PTS = 60_000
+        rng = np.random.default_rng(0)
+        if len(ref) > MAX_PTS:
+            ref = ref[rng.choice(len(ref), MAX_PTS, replace=False)]
+        if len(cur) > MAX_PTS:
+            cur = cur[rng.choice(len(cur), MAX_PTS, replace=False)]
 
-        T = reg.transformation
-        self.append_log(
-            "[DEBUG] (PointDiff) ICP: fitness={:.3f}, rmse={:.3f}, 이동={:.2f}mm".format(
-                reg.fitness, reg.inlier_rmse, np.linalg.norm(T[:3, 3])
-            )
-        )
-
-        pcd_cur_aligned = o3d.geometry.PointCloud(pcd_cur)  # 복사
-        pcd_cur_aligned.transform(T)
-
-        pts_cur = np.asarray(pcd_cur_aligned.points)
-        pts_ref = np.asarray(pcd_ref.points)
-        if pts_cur.size == 0 or pts_ref.size == 0:
+        try:
+            from scipy.spatial import KDTree  # type: ignore
+        except ImportError:
+            self.append_log("[WARN] scipy 미설치 — 포인트 diff 뷰 생략")
             return None
 
-        d_cur_to_ref = np.asarray(pcd_cur_aligned.compute_point_cloud_distance(pcd_ref))
-        d_ref_to_cur = np.asarray(pcd_ref.compute_point_cloud_distance(pcd_cur_aligned))
+        tree_ref = KDTree(ref)
+        tree_cur = KDTree(cur)
+        d_cur_to_ref, _ = tree_ref.query(cur, workers=-1)
+        d_ref_to_cur, _ = tree_cur.query(ref, workers=-1)
 
         threshold_mm = self.get_threshold_mm()
 
-        dist_clipped = np.clip(d_cur_to_ref, 0.0, threshold_mm)
+        # cur 포인트: 거리에 따라 녹→적 색상
+        dist_clipped = np.clip(d_cur_to_ref, 0.0, threshold_mm).astype(np.float32)
         norm = dist_clipped / (threshold_mm + 1e-6)
+        hh = (1.0 - norm) * (1.0 / 3.0)
+        ss = np.ones_like(hh, dtype=np.float32)
+        vv = np.ones_like(hh, dtype=np.float32)
+        r_ch, g_ch, b_ch = hsv_to_rgb_np(hh, ss, vv)
+        colors_cur = np.stack([r_ch, g_ch, b_ch], axis=1).astype(np.float32)
+        colors_cur[d_cur_to_ref >= threshold_mm] = [1.0, 1.0, 1.0]
 
-        h = (1.0 - norm) * (1.0 / 3.0)  # green ~ red
-        s = np.ones_like(h, dtype=np.float32)
-        v = np.ones_like(h, dtype=np.float32)
-
-        r, g, b = hsv_to_rgb_np(h, s, v)
-        colors_cur = np.stack([r, g, b], axis=1).astype(np.float32)
-
-        mask_large_cur = d_cur_to_ref >= threshold_mm
-        colors_cur[mask_large_cur] = 1.0
-
-        mask_large_ref = d_ref_to_cur >= threshold_mm
-        pts_ref_far = pts_ref[mask_large_ref]
-
+        # ref 포인트 중 threshold 초과: 흰색으로 오버레이
+        pts_ref_far = ref[d_ref_to_cur >= threshold_mm]
         if pts_ref_far.size > 0:
-            colors_ref_far = np.ones_like(pts_ref_far, dtype=np.float32)
-            pts_combined = np.vstack([pts_cur, pts_ref_far])
+            colors_ref_far = np.ones((len(pts_ref_far), 3), dtype=np.float32)
+            pts_combined = np.vstack([cur, pts_ref_far])
             colors_combined = np.vstack([colors_cur, colors_ref_far])
         else:
-            pts_combined = pts_cur
+            pts_combined = cur
             colors_combined = colors_cur
 
         return pts_combined, colors_combined
@@ -4542,32 +5039,91 @@ class MainWindow(QMainWindow):
             self.edit_tol_distance.setText("10")
             return default
 
-    def get_allow_ratio(self) -> float:
-        default = float(FIXED_ALLOW_RATIO)  # 입력이 비면 기본 2%
+    def get_allow_area_mm2(self) -> float:
+        """허용 불량 면적 (mm²). 이 면적 이하이면 합격."""
+        default = 500.0
         try:
-            text = self.edit_tol_ratio.text().strip()
+            text = self.edit_tol_area.text().strip()
         except AttributeError:
             return default
         if text == "":
             return default
         try:
-            val_percent = float(text)
-            if val_percent < 0:
+            val = float(text)
+            if val < 0:
                 raise ValueError
-            return val_percent / 100.0
+            return val
         except ValueError:
-            self.append_log(
-                f"[WARN] 오차 비율(%) 입력이 잘못되어 기본값 {default*100:.0f}%를 사용합니다."
-            )
-            self.edit_tol_ratio.setText(str(int(default * 100)))
+            self.append_log("[WARN] 허용 불량 면적 입력이 잘못되어 기본값 500mm²를 사용합니다.")
+            self.edit_tol_area.setText("500")
             return default
+
+    def _compute_defect_area_mm2(
+        self,
+        ref_grid: "np.ndarray | None",
+        cur_grid: "np.ndarray | None",
+        rois: "list[tuple]",
+        thr_mm: float,
+    ) -> "tuple[float, float]":
+        """
+        ROI 영역 내에서 depth 차이가 thr_mm 를 초과하는 불량 점들의
+        실제 면적(mm²)을 1mm² 격자 투영으로 계산한다.
+
+        Returns:
+            (bad_area_mm2, total_roi_area_mm2)
+        Ref/cur_grid: H×W×3 (XYZ in mm). rois: [(x,y,w,h)…].
+        """
+        if ref_grid is None or cur_grid is None:
+            return 0.0, 0.0
+
+        H = min(ref_grid.shape[0], cur_grid.shape[0])
+        W = min(ref_grid.shape[1], cur_grid.shape[1])
+        ref = ref_grid[:H, :W]
+        cur = cur_grid[:H, :W]
+
+        # ROI 마스크 (pixel 좌표)
+        if rois:
+            roi_mask = np.zeros((H, W), dtype=bool)
+            for rx, ry, rw, rh in rois:
+                rx1, ry1 = max(0, rx), max(0, ry)
+                rx2, ry2 = min(rx + rw, W), min(ry + rh, H)
+                if rx2 > rx1 and ry2 > ry1:
+                    roi_mask[ry1:ry2, rx1:rx2] = True
+        else:
+            roi_mask = np.ones((H, W), dtype=bool)
+
+        # 유효 픽셀: 양쪽 모두 finite & z > 0
+        valid = (
+            np.isfinite(ref).all(axis=2) & (ref[:, :, 2] > 0)
+            & np.isfinite(cur).all(axis=2) & (cur[:, :, 2] > 0)
+            & roi_mask
+        )
+        if not np.any(valid):
+            return 0.0, 0.0
+
+        # 불량 픽셀: depth(z) 차이 > thr_mm
+        z_diff = np.abs(cur[:, :, 2] - ref[:, :, 2])
+        bad_mask = valid & (z_diff > thr_mm)
+
+        # 1mm² 격자 투영: ref XY 좌표를 1mm 격자로 매핑
+        def _grid_area(mask: np.ndarray) -> float:
+            pts_xy = ref[mask, :2]  # Nx2 (X, Y in mm)
+            if len(pts_xy) == 0:
+                return 0.0
+            cells = set(zip(np.floor(pts_xy[:, 0]).astype(int),
+                            np.floor(pts_xy[:, 1]).astype(int)))
+            return float(len(cells))  # mm²
+
+        bad_area = _grid_area(bad_mask)
+        total_area = _grid_area(valid)
+        return bad_area, total_area
 
     def on_apply_tolerance_clicked(self):
         thr_mm = self.get_threshold_mm()
-        ratio = self.get_allow_ratio()
+        allow_area = self.get_allow_area_mm2()
 
         self.append_log(
-            f"[INFO] 허용 오차 기준 재적용: 거리={thr_mm:.1f}mm, 비율={ratio*100:.2f}%"
+            f"[INFO] 오차허용범위 적용: 기준거리={thr_mm:.1f}mm, 허용불량면적={allow_area:.1f}mm²"
         )
 
         self.update_tolerance_display()
@@ -4633,57 +5189,65 @@ class MainWindow(QMainWindow):
                 )
             return
 
-        mean_cm, max_cm, diff_ratio, threshold_mm = result
+        mean_cm, max_cm, _, _ = result
 
         thr_mm = self.get_threshold_mm()
-        ratio_limit = self.get_allow_ratio()
+        allow_area = self.get_allow_area_mm2()
 
-        # ✅ 표시용 값(mm)
-        mean_mm_disp = float(mean_cm * 10.0)
-        max_mm_disp = float(max_cm * 10.0)
-
-        # ✅ 어떤 소스를 썼는지
         src = "Point" if pc_result is not None else "Depth"
 
-        # ✅ 소스별 largest 값 가져오기
         if src == "Point":
             min_mm_disp = float(getattr(self, "_last_point_min_mm", 0.0))
             mean_mm_disp = float(getattr(self, "_last_point_mean_mm", mean_cm * 10.0))
             max_mm_disp = float(getattr(self, "_last_point_max_mm", max_cm * 10.0))
         else:
-            min_mm_disp = float(getattr(self, "_last_point_min_mm", 0.0))
-            mean_mm_disp = float(getattr(self, "_last_point_mean_mm", mean_cm * 10.0))
-            max_mm_disp = float(getattr(self, "_last_point_max_mm", max_cm * 10.0))
+            min_mm_disp = float(getattr(self, "_last_depth_min_mm", 0.0))
+            mean_mm_disp = float(getattr(self, "_last_depth_mean_mm", mean_cm * 10.0))
+            max_mm_disp = float(getattr(self, "_last_depth_max_mm", max_cm * 10.0))
 
-        # ✅ 상세 라벨 갱신
+        # 불량 면적 계산 (그리드 있을 때만)
+        bad_area, total_area = self._compute_defect_area_mm2(
+            self.compare_pointcloud_full,
+            self.last_pointcloud_full,
+            self.compare_rois,
+            thr_mm,
+        )
+        self._last_bad_area_mm2 = bad_area
+        self._last_total_area_mm2 = total_area
+
+        # 상세 라벨
         if hasattr(self, "label_tol_details") and self.label_tol_details:
+            area_str = f"{bad_area:.1f} mm²" if total_area > 0 else "계산 불가"
             self.label_tol_details.setText(
                 f"소스: {src}\n"
                 f"오차(mm): min {min_mm_disp:.2f} / mean {mean_mm_disp:.2f} / max {max_mm_disp:.2f}\n"
-                f"오차 비율: {diff_ratio*100:.2f}%"
+                f"불량 면적: {area_str}  (허용: {allow_area:.1f} mm²)"
             )
 
-        thr_mm = self.get_threshold_mm()
-        thr_cm = thr_mm / 10.0
-        ratio_limit = self.get_allow_ratio()
+        # 판정: 오차거리 기준 초과 + 불량 면적 초과 시 NG
+        # 그리드가 없어 면적 계산 불가일 때는 기존 방식(mean_mm < thr_mm) 유지
+        if total_area > 0:
+            verdict_ok = (bad_area <= allow_area)
+        else:
+            verdict_ok = (mean_mm_disp < thr_mm)
 
-        if (mean_cm < thr_cm) and (diff_ratio < ratio_limit):
+        if verdict_ok:
             self.label_tol_indicator.setText("V")
             self.label_tol_indicator.setStyleSheet(
                 "background-color:white; color:lime; font-size:36px; font-weight:bold;"
             )
-            src = "Point" if pc_result is not None else "Depth"
             self.append_log(
-                f"[DEBUG] 허용오차 판정: OK ({src} 기준, thr={thr_mm:.1f}mm, ratio<{ratio_limit*100:.1f}%)"
+                f"[DEBUG] 판정: OK ({src}, thr={thr_mm:.1f}mm, "
+                f"불량면적={bad_area:.1f}mm² ≤ 허용{allow_area:.1f}mm²)"
             )
         else:
             self.label_tol_indicator.setText("X")
             self.label_tol_indicator.setStyleSheet(
                 "background-color:white; color:red; font-size:36px; font-weight:bold;"
             )
-            src = "Point" if pc_result is not None else "Depth"
             self.append_log(
-                f"[DEBUG] 허용오차 판정: NG ({src} 기준, thr={thr_mm:.1f}mm, ratio>={ratio_limit*100:.1f}%)"
+                f"[DEBUG] 판정: NG ({src}, thr={thr_mm:.1f}mm, "
+                f"불량면적={bad_area:.1f}mm² > 허용{allow_area:.1f}mm²)"
             )
 
     def on_diff_toggle_clicked(self):
@@ -4864,14 +5428,27 @@ class MainWindow(QMainWindow):
             "min_mm": float,
             "mean_mm": float,
             "max_mm": float,
-            "ratio": float,         # 0~1
             "thr_mm": float,
-            "limit_ratio": float,   # 0~1 (입력한 허용비율)
+            "allow_area_mm2": float,  # 허용 불량 면적(mm²)
+            "bad_area_mm2": float,    # 판정 불량 면적(mm²)
             "verdict": "V" or "X"
           }
         """
         thr_mm = float(self.get_threshold_mm())
-        limit_ratio = float(self.get_allow_ratio())
+        allow_area_mm2 = float(self.get_allow_area_mm2())
+
+        # 불량 면적 계산 (그리드 있을 때만, 없으면 0/0 반환)
+        bad_area, total_area = self._compute_defect_area_mm2(
+            self.compare_pointcloud_full,
+            self.last_pointcloud_full,
+            self.compare_rois,
+            thr_mm,
+        )
+
+        def _area_verdict(mean_mm: float) -> str:
+            if total_area > 0:
+                return "V" if bad_area <= allow_area_mm2 else "X"
+            return "V" if mean_mm < thr_mm else "X"
 
         # --- Point 우선 (open3d 필요) ---
         if (
@@ -4883,22 +5460,20 @@ class MainWindow(QMainWindow):
                 self.compare_pointcloud, self.last_pointcloud
             )
             if pc is not None:
-                mean_cm, max_cm, ratio, thr_mm = pc
+                mean_cm, max_cm, _, _ = pc
                 mean_mm = float(getattr(self, "_last_point_mean_mm", mean_cm * 10.0))
                 min_mm = float(getattr(self, "_last_point_min_mm", 0.0))
                 max_mm = float(getattr(self, "_last_point_max_mm", max_cm * 10.0))
-
-                verdict = "V" if (mean_mm < thr_mm) and (ratio < limit_ratio) else "X"
 
                 return {
                     "src": "Point",
                     "min_mm": min_mm,
                     "mean_mm": mean_mm,
                     "max_mm": max_mm,
-                    "ratio": float(ratio),
-                    "thr_mm": float(thr_mm),
-                    "limit_ratio": float(limit_ratio),
-                    "verdict": verdict,
+                    "thr_mm": thr_mm,
+                    "allow_area_mm2": allow_area_mm2,
+                    "bad_area_mm2": float(bad_area),
+                    "verdict": _area_verdict(mean_mm),
                 }
 
         # --- Depth (open3d 없어도 가능) ---
@@ -4907,21 +5482,20 @@ class MainWindow(QMainWindow):
                 self.compare_depth_array, self.last_depth_array
             )
             if depth is not None:
-                mean_cm, max_cm, ratio, thr_mm = depth
+                mean_cm, max_cm, _, _ = depth
                 mean_mm = float(getattr(self, "_last_depth_mean_mm", mean_cm * 10.0))
                 min_mm = float(getattr(self, "_last_depth_min_mm", 0.0))
                 max_mm = float(getattr(self, "_last_depth_max_mm", max_cm * 10.0))
 
-                verdict = "V" if (mean_mm < thr_mm) and (ratio < limit_ratio) else "X"
                 return {
                     "src": "Depth",
                     "min_mm": min_mm,
                     "mean_mm": mean_mm,
                     "max_mm": max_mm,
-                    "ratio": float(ratio),  # ✅ 이제 '최대 blob 비율'
-                    "thr_mm": float(thr_mm),
-                    "limit_ratio": float(limit_ratio),
-                    "verdict": verdict,
+                    "thr_mm": thr_mm,
+                    "allow_area_mm2": allow_area_mm2,
+                    "bad_area_mm2": float(bad_area),
+                    "verdict": _area_verdict(mean_mm),
                 }
 
         return None
@@ -4979,40 +5553,34 @@ class MainWindow(QMainWindow):
                 pts = self.last_pointcloud
                 cols = self.last_colors
 
-                if o3d is not None:
-                    pcd = o3d.geometry.PointCloud()
-                    pcd.points = o3d.utility.Vector3dVector(pts)
-                    if cols is not None:
-                        cols_to_use = cols.astype(np.float32)
-                        if cols_to_use.max() > 1.0:
-                            cols_to_use = cols_to_use / 255.0
-                        pcd.colors = o3d.utility.Vector3dVector(cols_to_use)
-                    o3d.io.write_point_cloud(ply_path, pcd)
-                else:
-                    n = pts.shape[0]
-                    has_color = cols is not None and cols.shape[0] == n
-                    with open(ply_path, "w", encoding="utf-8") as f:
-                        f.write("ply\n")
-                        f.write("format ascii 1.0\n")
-                        f.write(f"element vertex {n}\n")
-                        f.write("property float x\n")
-                        f.write("property float y\n")
-                        f.write("property float z\n")
-                        if has_color:
-                            f.write("property uchar red\n")
-                            f.write("property uchar green\n")
-                            f.write("property uchar blue\n")
-                        f.write("end_header\n")
-                        for i in range(n):
-                            x, y, z = pts[i]
-                            if has_color:
-                                c = cols[i].astype(np.float32)
-                                if c.max() <= 1.0:
-                                    c = c * 255.0
-                                r, g, b = [int(np.clip(v, 0, 255)) for v in c]
-                                f.write(f"{x} {y} {z} {r} {g} {b}\n")
-                            else:
-                                f.write(f"{x} {y} {z}\n")
+                # o3d Vector3dVector → Windows access violation 유발, numpy 바이너리 PLY로 대체
+                n = pts.shape[0]
+                xyz = pts.astype(np.float32)
+                cols_u8: np.ndarray | None = None
+                if cols is not None and cols.shape[0] == n:
+                    c_arr = cols.astype(np.float32)
+                    if c_arr.max() <= 1.0:
+                        c_arr = c_arr * 255.0
+                    cols_u8 = np.clip(c_arr, 0, 255).astype(np.uint8)
+
+                with open(ply_path, "wb") as f:
+                    header = "ply\nformat binary_little_endian 1.0\n"
+                    header += f"element vertex {n}\n"
+                    header += "property float x\nproperty float y\nproperty float z\n"
+                    if cols_u8 is not None:
+                        header += "property uchar red\nproperty uchar green\nproperty uchar blue\n"
+                    header += "end_header\n"
+                    f.write(header.encode("ascii"))
+                    if cols_u8 is not None:
+                        buf = np.zeros(n, dtype=[
+                            ("x", "<f4"), ("y", "<f4"), ("z", "<f4"),
+                            ("r", "u1"), ("g", "u1"), ("b", "u1"),
+                        ])
+                        buf["x"] = xyz[:, 0]; buf["y"] = xyz[:, 1]; buf["z"] = xyz[:, 2]
+                        buf["r"] = cols_u8[:, 0]; buf["g"] = cols_u8[:, 1]; buf["b"] = cols_u8[:, 2]
+                        f.write(buf.tobytes())
+                    else:
+                        f.write(xyz.tobytes())
 
                 self.append_log(f"[ERROR-SAVE] PLY 저장: {ply_path}")
             except Exception as e:
@@ -5048,11 +5616,11 @@ class MainWindow(QMainWindow):
             "사용된 비교데이터",
             "합격/불합격",
             "적용 오차거리(mm)",
-            "적용 오차비율(%)",
+            "허용 불량 면적(mm²)",
             "판정 오차거리 최소(mm)",
             "판정 오차거리 평균(mm)",
             "판정 오차거리 최대(mm)",
-            "판정 오차비율(%)",
+            "판정 불량 면적(mm²)",
             "판정 소스(Point)",
         ]
 
@@ -5077,12 +5645,12 @@ class MainWindow(QMainWindow):
         compare_name = self._get_compare_name_for_log()
         verdict = stats.get("verdict", "X")
         thr_mm = float(self.get_threshold_mm())
-        ratio_limit_pct = float(self.get_allow_ratio() * 100.0)
+        allow_area = float(self.get_allow_area_mm2())
 
         min_mm = float(stats["min_mm"])
         mean_mm = float(stats["mean_mm"])
         max_mm = float(stats["max_mm"])
-        ratio_pct = float(stats["ratio"] * 100.0)
+        bad_area_mm2 = float(stats.get("bad_area_mm2", 0.0))
         src = stats.get("src", "")
 
         row_values = [
@@ -5091,11 +5659,11 @@ class MainWindow(QMainWindow):
             compare_name,
             verdict,
             round(thr_mm, 3),
-            round(ratio_limit_pct, 3),
+            round(allow_area, 3),
             round(min_mm, 3),
             round(mean_mm, 3),
             round(max_mm, 3),
-            round(ratio_pct, 3),
+            round(bad_area_mm2, 3),
             src,
         ]
 
@@ -5163,11 +5731,11 @@ class MainWindow(QMainWindow):
             "사용된 비교데이터",
             "합격/불합격",
             "적용 오차거리(mm)",
-            "적용 오차비율(%)",
+            "허용 불량 면적(mm²)",
             "판정 오차거리 최소(mm)",
             "판정 오차거리 평균(mm)",
             "판정 오차거리 최대(mm)",
-            "판정 오차비율(%)",
+            "판정 불량 면적(mm²)",
             "판정 소스(Point)",
         ]
 
@@ -5225,8 +5793,39 @@ class MainWindow(QMainWindow):
 
 
 def main():
+    import traceback
+    import faulthandler
+
+    # C 레벨 크래시(segfault)가 발생해도 스택 트레이스를 stderr에 출력
+    faulthandler.enable()
+
+    def _exception_hook(exc_type, exc_value, exc_tb):
+        """Python 예외를 stderr에 출력하고 앱을 계속 유지."""
+        traceback.print_exception(exc_type, exc_value, exc_tb)
+
+    sys.excepthook = _exception_hook
+
+    # ★ QApplication 생성 전에 OpenGL 포맷을 지정해야 함
+    # pyqtgraph GLViewWidget은 기본 OpenGL 포맷이 호환되지 않으면 segfault 발생
+    try:
+        from PySide6.QtGui import QSurfaceFormat
+        fmt = QSurfaceFormat()
+        fmt.setDepthBufferSize(24)
+        fmt.setStencilBufferSize(8)
+        QSurfaceFormat.setDefaultFormat(fmt)
+    except Exception:
+        pass
+
     app = QApplication(sys.argv)
     apply_dark_palette(app)
+
+    # pyqtgraph 전역 옵션 설정 (QApplication 생성 후, 윈도우 생성 전)
+    if pg is not None:
+        try:
+            pg.setConfigOptions(antialias=False)  # 안티앨리어싱 OFF → 안정성 우선
+        except Exception:
+            pass
+
     win = MainWindow()
     win.show()
     sys.exit(app.exec())
